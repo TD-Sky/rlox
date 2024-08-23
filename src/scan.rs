@@ -6,7 +6,8 @@ use smol_str::SmolStr;
 
 #[derive(Debug)]
 pub struct Scanner<'a> {
-    source: Peekable<CharIndices<'a>>,
+    source: &'a str,
+    chars: Peekable<CharIndices<'a>>,
     tokens: Vec<Token>,
     cursor: Range<usize>,
     line: usize,
@@ -16,7 +17,8 @@ pub struct Scanner<'a> {
 impl<'a> Scanner<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
-            source: source.char_indices().peekable(),
+            source,
+            chars: source.char_indices().peekable(),
             tokens: vec![],
             cursor: 0..0,
             line: 1,
@@ -105,16 +107,25 @@ impl<'a> Scanner<'a> {
                         self.advance();
                     }
                 } else {
-                    self.add_token(TokenKind::Slash)
+                    self.add_token(TokenKind::Slash);
                 }
             }
             ' ' | '\r' | '\t' => (),
             '\n' => self.line += 1,
+            '"' => {
+                self.string()?;
+            }
+            c if c.is_ascii_digit() => {
+                self.number()?;
+            }
+            c if c.is_ascii_alphabetic() => {
+                self.identifier_or_keyword();
+            }
             _ => {
                 return Err(ScanError {
                     offset: self.cursor.start,
                     span: self.cursor.clone(),
-                    msg: "unexpected character",
+                    msg: "unexpected character".into(),
                 });
             }
         }
@@ -122,18 +133,106 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
+    fn string(&mut self) -> Result<(), ScanError> {
+        loop {
+            let Some(c) = self.peek() else {
+                return Err(ScanError {
+                    offset: self.cursor.start,
+                    span: self.cursor.clone(),
+                    msg: "unterminated string".into(),
+                });
+            };
+
+            self.advance().unwrap();
+
+            if c == '"' {
+                break;
+            }
+
+            if c == '\n' {
+                self.line += 1;
+            }
+        }
+
+        self.add_token(TokenKind::String(self.source[self.cursor.clone()].into()));
+
+        Ok(())
+    }
+
+    fn number(&mut self) -> Result<(), ScanError> {
+        while self.expect_pred(|c| c.is_ascii_digit()) {}
+
+        if self.chars.peek().is_some_and(|(i, c)| {
+            *c == '.'
+                && self
+                    .source
+                    .get(i + 1..)
+                    .is_some_and(|s| s.starts_with(|c: char| c.is_ascii_digit()))
+        }) {
+            let _ = self.advance();
+
+            while self.expect_pred(|c| c.is_ascii_digit()) {}
+        }
+
+        let x = self.source[self.cursor.clone()]
+            .parse::<f64>()
+            .map_err(|e| ScanError {
+                offset: self.cursor.start,
+                span: self.cursor.clone(),
+                msg: e.to_string(),
+            })?;
+        self.add_token(TokenKind::Number(x));
+
+        Ok(())
+    }
+
+    fn identifier_or_keyword(&mut self) {
+        while self.expect_pred(|c| c.is_alphanumeric() || c == '_') {}
+
+        let s = &self.source[self.cursor.clone()];
+
+        let token = match s {
+            "and" => TokenKind::And,
+            "class" => TokenKind::Class,
+            "else" => TokenKind::Else,
+            "false" => TokenKind::False,
+            "for" => TokenKind::For,
+            "fun" => TokenKind::Fun,
+            "if" => TokenKind::If,
+            "nil" => TokenKind::Nil,
+            "or" => TokenKind::Or,
+            "print" => TokenKind::Print,
+            "return" => TokenKind::Return,
+            "super" => TokenKind::Super,
+            "this" => TokenKind::This,
+            "true" => TokenKind::True,
+            "var" => TokenKind::Var,
+            "while" => TokenKind::While,
+            s => TokenKind::Identifier(s.into()),
+        };
+
+        self.add_token(token)
+    }
+
     fn advance(&mut self) -> Option<char> {
-        let (_, c) = self.source.next()?;
-        self.cursor.end = self.source.peek().map(|(i, _)| *i).unwrap_or(self.len);
+        let (_, c) = self.chars.next()?;
+        self.cursor.end = self.chars.peek().map(|(i, _)| *i).unwrap_or(self.len);
         Some(c)
     }
 
     fn peek(&mut self) -> Option<char> {
-        self.source.peek().map(|(_, c)| *c)
+        self.chars.peek().map(|(_, c)| *c)
     }
 
     fn expect_char(&mut self, expected: char) -> bool {
-        if self.peek().is_some_and(|c| c == expected) {
+        self.expect_pred(|c| c == expected)
+    }
+
+    fn expect_pred<F>(&mut self, pred: F) -> bool
+    where
+        F: FnOnce(char) -> bool,
+    {
+        if self.peek().is_some_and(pred) {
             let _ = self.advance().is_some();
             true
         } else {
@@ -164,7 +263,7 @@ impl Span {
 pub struct ScanError {
     pub offset: usize,
     pub span: Range<usize>,
-    pub msg: &'static str,
+    pub msg: String,
 }
 
 #[derive(Debug, Clone)]
