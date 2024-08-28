@@ -106,6 +106,8 @@ impl<'a> Scanner<'a> {
                     while self.peek().is_some_and(|c| c != '\n') && !self.is_end() {
                         self.advance();
                     }
+                } else if self.expect_char('*') {
+                    self.block_comment()?;
                 } else {
                     self.add_token(TokenKind::Slash);
                 }
@@ -212,6 +214,33 @@ impl<'a> Scanner<'a> {
         };
 
         self.add_token(token)
+    }
+
+    fn block_comment(&mut self) -> Result<(), ScanError> {
+        let mut nested = 0;
+
+        loop {
+            let Some(c) = self.peek() else {
+                return Err(ScanError {
+                    offset: self.cursor.start,
+                    span: self.cursor.clone(),
+                    msg: "unterminated block comment".into(),
+                });
+            };
+
+            let _ = self.advance();
+
+            if c == '*' && self.expect_char('/') {
+                nested -= 1;
+                if nested < 0 {
+                    return Ok(());
+                }
+            } else if c == '\n' {
+                self.line += 1;
+            } else if c == '/' && self.expect_char('*') {
+                nested += 1;
+            }
+        }
     }
 
     fn advance(&mut self) -> Option<char> {

@@ -24,9 +24,10 @@ fn main() -> anyhow::Result<()> {
 
 fn prompt() -> rustyline::Result<()> {
     let mut rl = DefaultEditor::new()?;
-    for line in rl.iter("> ") {
-        match line {
+    loop {
+        match rl.readline("> ") {
             Ok(line) => {
+                rl.add_history_entry(&line)?;
                 run(None, &line);
             }
             Err(ReadlineError::Eof) => return Ok(()),
@@ -37,6 +38,4 @@ fn prompt() -> rustyline::Result<()> {
             Err(e) => return Err(e),
         }
     }
-
-    Ok(())
 }
