@@ -295,6 +295,13 @@ pub struct ScanError {
     pub msg: String,
 }
 
+/// ```text
+/// NUMBER      -> DIGIT+ ( "." DIGIT+ )? ;
+/// STRING      -> '"' <any char except '"'>* '"' ;
+/// IDENTIFIER  -> ALPHA ( ALPHA | DIGIT )* ;
+/// ALPHA       -> "a" ... "z" | "A" ... "Z" | "_" ;
+/// DIGIT       -> "0" ... "9" ;
+/// ```
 #[derive(Debug, Clone)]
 pub enum Token {
     /// `(`

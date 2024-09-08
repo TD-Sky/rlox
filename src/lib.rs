@@ -1,4 +1,5 @@
 pub mod cli;
+mod expr;
 mod scan;
 
 use std::path::Path;
