@@ -8,7 +8,7 @@ use smol_str::SmolStr;
 pub struct Scanner<'a> {
     source: &'a str,
     chars: Peekable<CharIndices<'a>>,
-    tokens: Vec<Token>,
+    tokens: Vec<Lexeme>,
     cursor: Range<usize>,
     line: usize,
     len: usize,
@@ -26,14 +26,14 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    pub fn scan(mut self) -> Result<Vec<Token>, ScanError> {
+    pub fn scan(mut self) -> Result<Vec<Lexeme>, ScanError> {
         while !self.is_end() {
             self.cursor.start = self.cursor.end;
             self.scan_token()?;
         }
 
-        self.tokens.push(Token {
-            kind: TokenKind::Eof,
+        self.tokens.push(Lexeme {
+            token: Token::Eof,
             span: Span::new(self.len..self.len, self.line),
         });
 
@@ -46,9 +46,9 @@ impl<'a> Scanner<'a> {
         self.cursor.start == self.len
     }
 
-    fn add_token(&mut self, token: TokenKind) {
-        self.tokens.push(Token {
-            kind: token,
+    fn add_token(&mut self, token: Token) {
+        self.tokens.push(Lexeme {
+            token,
             span: Span::new(self.cursor.clone(), self.line),
         });
     }
@@ -59,45 +59,45 @@ impl<'a> Scanner<'a> {
         };
 
         match c {
-            '(' => self.add_token(TokenKind::LeftParen),
-            ')' => self.add_token(TokenKind::RightParen),
-            '{' => self.add_token(TokenKind::LeftBrace),
-            '}' => self.add_token(TokenKind::RightBrace),
-            ',' => self.add_token(TokenKind::Comma),
-            '.' => self.add_token(TokenKind::Dot),
-            '-' => self.add_token(TokenKind::Minus),
-            '+' => self.add_token(TokenKind::Plus),
-            ';' => self.add_token(TokenKind::Semicolon),
-            '*' => self.add_token(TokenKind::Star),
+            '(' => self.add_token(Token::LeftParen),
+            ')' => self.add_token(Token::RightParen),
+            '{' => self.add_token(Token::LeftBrace),
+            '}' => self.add_token(Token::RightBrace),
+            ',' => self.add_token(Token::Comma),
+            '.' => self.add_token(Token::Dot),
+            '-' => self.add_token(Token::Minus),
+            '+' => self.add_token(Token::Plus),
+            ';' => self.add_token(Token::Semicolon),
+            '*' => self.add_token(Token::Star),
             '!' => {
                 let tk = if self.expect_char('=') {
-                    TokenKind::BangEqual
+                    Token::BangEqual
                 } else {
-                    TokenKind::Bang
+                    Token::Bang
                 };
                 self.add_token(tk)
             }
             '=' => {
                 let tk = if self.expect_char('=') {
-                    TokenKind::EqualEqual
+                    Token::EqualEqual
                 } else {
-                    TokenKind::Equal
+                    Token::Equal
                 };
                 self.add_token(tk)
             }
             '<' => {
                 let tk = if self.expect_char('=') {
-                    TokenKind::LessEqual
+                    Token::LessEqual
                 } else {
-                    TokenKind::Less
+                    Token::Less
                 };
                 self.add_token(tk)
             }
             '>' => {
                 let tk = if self.expect_char('=') {
-                    TokenKind::GreaterEqual
+                    Token::GreaterEqual
                 } else {
-                    TokenKind::Greater
+                    Token::Greater
                 };
                 self.add_token(tk)
             }
@@ -109,7 +109,7 @@ impl<'a> Scanner<'a> {
                 } else if self.expect_char('*') {
                     self.block_comment()?;
                 } else {
-                    self.add_token(TokenKind::Slash);
+                    self.add_token(Token::Slash);
                 }
             }
             ' ' | '\r' | '\t' => (),
@@ -156,7 +156,7 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        self.add_token(TokenKind::String(self.source[self.cursor.clone()].into()));
+        self.add_token(Token::String(self.source[self.cursor.clone()].into()));
 
         Ok(())
     }
@@ -183,7 +183,7 @@ impl<'a> Scanner<'a> {
                 span: self.cursor.clone(),
                 msg: e.to_string(),
             })?;
-        self.add_token(TokenKind::Number(x));
+        self.add_token(Token::Number(x));
 
         Ok(())
     }
@@ -194,23 +194,23 @@ impl<'a> Scanner<'a> {
         let s = &self.source[self.cursor.clone()];
 
         let token = match s {
-            "and" => TokenKind::And,
-            "class" => TokenKind::Class,
-            "else" => TokenKind::Else,
-            "false" => TokenKind::False,
-            "for" => TokenKind::For,
-            "fun" => TokenKind::Fun,
-            "if" => TokenKind::If,
-            "nil" => TokenKind::Nil,
-            "or" => TokenKind::Or,
-            "print" => TokenKind::Print,
-            "return" => TokenKind::Return,
-            "super" => TokenKind::Super,
-            "this" => TokenKind::This,
-            "true" => TokenKind::True,
-            "var" => TokenKind::Var,
-            "while" => TokenKind::While,
-            s => TokenKind::Identifier(s.into()),
+            "and" => Token::And,
+            "class" => Token::Class,
+            "else" => Token::Else,
+            "false" => Token::False,
+            "for" => Token::For,
+            "fun" => Token::Fun,
+            "if" => Token::If,
+            "nil" => Token::Nil,
+            "or" => Token::Or,
+            "print" => Token::Print,
+            "return" => Token::Return,
+            "super" => Token::Super,
+            "this" => Token::This,
+            "true" => Token::True,
+            "var" => Token::Var,
+            "while" => Token::While,
+            s => Token::Identifier(s.into()),
         };
 
         self.add_token(token)
@@ -271,8 +271,8 @@ impl<'a> Scanner<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Token {
-    kind: TokenKind,
+pub struct Lexeme {
+    token: Token,
     span: Span,
 }
 
@@ -296,7 +296,7 @@ pub struct ScanError {
 }
 
 #[derive(Debug, Clone)]
-pub enum TokenKind {
+pub enum Token {
     /// `(`
     LeftParen,
     /// `)`
