@@ -272,8 +272,8 @@ impl<'a> Scanner<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Lexeme {
-    token: Token,
-    span: Span,
+    pub token: Token,
+    pub span: Span,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

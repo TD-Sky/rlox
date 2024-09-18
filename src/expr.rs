@@ -3,8 +3,6 @@ use smol_str::SmolStr;
 use crate::scan::Token;
 
 /// ```text
-/// expression  -> assignment ;
-///
 /// assignment  -> ( call "." )? IDENTIFIER "=" assignment
 ///                | logic_or ;
 ///
@@ -12,21 +10,8 @@ use crate::scan::Token;
 ///
 /// logic_and   -> equality ( "and" equality )* ;
 ///
-/// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
-///
-/// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-///
-/// term        -> factor ( ( "-" | "+" ) factor )* ;
-///
-/// factor      -> unary ( ( "/" | "*" ) unary )* ;
-///
-/// unary       -> ( "!" | "-" ) unary | call ;
-///
 /// call        -> primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
 ///
-/// primary     -> "true" | "false" | "nil" | "this"
-///                | NUMBER | STRING | IDENTIFIER | "(" expression ")"
-///                | "super" "." IDENTIFIER ;
 /// ```
 #[derive(Debug)]
 pub enum Expr {
@@ -80,6 +65,7 @@ pub enum Literal {
     Bool(bool),
     Number(f64),
     String(SmolStr),
+    Null,
 }
 
 #[derive(Debug)]
@@ -116,4 +102,28 @@ pub struct Unary {
 #[derive(Debug)]
 pub struct Variable {
     pub name: Token,
+}
+
+impl From<Unary> for Expr {
+    fn from(expr: Unary) -> Self {
+        Self::Unary(Box::new(expr))
+    }
+}
+
+impl From<Binary> for Expr {
+    fn from(expr: Binary) -> Self {
+        Self::Binary(Box::new(expr))
+    }
+}
+
+impl From<Literal> for Expr {
+    fn from(expr: Literal) -> Self {
+        Self::Literal(expr)
+    }
+}
+
+impl From<Grouping> for Expr {
+    fn from(expr: Grouping) -> Self {
+        Self::Grouping(Box::new(expr))
+    }
 }
