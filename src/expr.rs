@@ -27,6 +27,7 @@ pub enum Expr {
     This(This),
     Unary(Box<Unary>),
     Variable(Variable),
+    Conditional(Box<Conditional>),
 }
 
 #[derive(Debug)]
@@ -94,6 +95,13 @@ pub struct This {
 }
 
 #[derive(Debug)]
+pub struct Conditional {
+    pub cond: Expr,
+    pub then: Expr,
+    pub or_else: Expr,
+}
+
+#[derive(Debug)]
 pub struct Unary {
     pub operator: Token,
     pub right: Expr,
@@ -125,5 +133,11 @@ impl From<Literal> for Expr {
 impl From<Grouping> for Expr {
     fn from(expr: Grouping) -> Self {
         Self::Grouping(Box::new(expr))
+    }
+}
+
+impl From<Conditional> for Expr {
+    fn from(expr: Conditional) -> Self {
+        Self::Conditional(Box::new(expr))
     }
 }

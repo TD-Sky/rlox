@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    expr::{Binary, Expr, Grouping, Literal, Unary},
+    expr::{Binary, Conditional, Expr, Grouping, Literal, Unary},
     scan::{Lexeme, Span, Token},
 };
 
@@ -27,7 +27,7 @@ impl<'a> Parser<'a> {
     /// expression -> assignment
     /// ```
     pub fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
+        self.conditional()
     }
 
     /// ```text
@@ -171,6 +171,54 @@ impl<'a> Parser<'a> {
             }
             _ => todo!(),
         };
+
+        Ok(expr)
+    }
+
+    /// ```text
+    /// comma -> expression ("," expression)*
+    /// ```
+    fn comma(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.equality()?;
+
+        while let Some(comma) = self.cursor.next_if(|t| matches!(t, Token::Comma)) {
+            expr = Binary {
+                left: expr,
+                operator: comma,
+                right: self.expression()?,
+            }
+            .into();
+        }
+
+        Ok(expr)
+    }
+
+    /// ```text
+    /// conditional -> equality ( "?" expression ":" conditional )?
+    /// ```
+    fn conditional(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.equality()?;
+
+        if self
+            .cursor
+            .next_if(|t| matches!(t, Token::Question))
+            .is_some()
+        {
+            let then = self.expression()?;
+            self.cursor
+                .next_if(|t| matches!(t, Token::Colon))
+                .ok_or_else(|| ParseError {
+                    span: self.cursor.next_span().range.clone(),
+                    msg: "expect `:` for ternary expression".into(),
+                })?;
+            let or_else = self.conditional()?;
+            expr = Conditional {
+                cond: expr,
+                then,
+                or_else,
+            }
+            .into()
+        }
 
         Ok(expr)
     }

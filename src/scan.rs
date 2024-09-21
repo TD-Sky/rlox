@@ -67,8 +67,10 @@ impl<'a> Scanner<'a> {
             '.' => self.add_token(Token::Dot),
             '-' => self.add_token(Token::Minus),
             '+' => self.add_token(Token::Plus),
+            ':' => self.add_token(Token::Colon),
             ';' => self.add_token(Token::Semicolon),
             '*' => self.add_token(Token::Star),
+            '?' => self.add_token(Token::Question),
             '!' => {
                 let tk = if self.expect_char('=') {
                     Token::BangEqual
@@ -320,6 +322,8 @@ pub enum Token {
     Minus,
     /// `+`
     Plus,
+    /// `:`
+    Colon,
     /// `;`
     Semicolon,
     /// `/`
@@ -328,6 +332,8 @@ pub enum Token {
     Star,
     /// `!`
     Bang,
+    /// `?`
+    Question,
     /// `!=`
     BangEqual,
     /// `=`
