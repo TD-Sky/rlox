@@ -1,6 +1,6 @@
 use smol_str::SmolStr;
 
-use crate::scan::Token;
+use crate::scan::Lexeme;
 
 /// ```text
 /// assignment  -> ( call "." )? IDENTIFIER "=" assignment
@@ -32,28 +32,28 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub struct Assign {
-    pub name: Token,
+    pub name: Lexeme,
     pub value: Expr,
 }
 
 #[derive(Debug)]
 pub struct Binary {
     pub left: Expr,
-    pub operator: Token,
+    pub operator: Lexeme,
     pub right: Expr,
 }
 
 #[derive(Debug)]
 pub struct Call {
     pub callee: Expr,
-    pub paren: Token,
+    pub paren: Lexeme,
     pub arguments: Vec<Expr>,
 }
 
 #[derive(Debug)]
 pub struct Get {
     pub object: Expr,
-    pub name: Token,
+    pub name: Lexeme,
 }
 
 #[derive(Debug)]
@@ -61,7 +61,7 @@ pub struct Grouping {
     pub expression: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Bool(bool),
     Number(f64),
@@ -72,26 +72,26 @@ pub enum Literal {
 #[derive(Debug)]
 pub struct Logical {
     pub left: Expr,
-    pub operator: Token,
+    pub operator: Lexeme,
     pub right: Expr,
 }
 
 #[derive(Debug)]
 pub struct Set {
     pub object: Expr,
-    pub name: Token,
+    pub name: Lexeme,
     pub value: Expr,
 }
 
 #[derive(Debug)]
 pub struct Super {
-    pub keyword: Token,
-    pub method: Token,
+    pub keyword: Lexeme,
+    pub method: Lexeme,
 }
 
 #[derive(Debug)]
 pub struct This {
-    pub keyword: Token,
+    pub keyword: Lexeme,
 }
 
 #[derive(Debug)]
@@ -103,13 +103,13 @@ pub struct Conditional {
 
 #[derive(Debug)]
 pub struct Unary {
-    pub operator: Token,
+    pub operator: Lexeme,
     pub right: Expr,
 }
 
 #[derive(Debug)]
 pub struct Variable {
-    pub name: Token,
+    pub name: Lexeme,
 }
 
 impl From<Unary> for Expr {

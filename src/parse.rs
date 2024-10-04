@@ -143,22 +143,26 @@ impl<'a> Parser<'a> {
     ///           | "super" "." IDENTIFIER
     /// ```
     fn primary(&mut self) -> Result<Expr, ParseError> {
-        let expr = match self.cursor.next_if(|t| {
-            matches!(
-                t,
-                Token::False
-                    | Token::True
-                    | Token::Nil
-                    | Token::Number(_)
-                    | Token::String(_)
-                    | Token::LeftParen
-            )
-        }) {
+        let expr = match self
+            .cursor
+            .next_if(|t| {
+                matches!(
+                    t,
+                    Token::False
+                        | Token::True
+                        | Token::Nil
+                        | Token::Number(_)
+                        | Token::String(_)
+                        | Token::LeftParen
+                )
+            })
+            .map(|lex| lex.token)
+        {
             Some(Token::True) => Literal::Bool(true).into(),
             Some(Token::False) => Literal::Bool(false).into(),
             Some(Token::Nil) => Literal::Null.into(),
             Some(Token::Number(x)) => Literal::Number(x).into(),
-            Some(Token::String(s)) => Literal::String(s).into(),
+            Some(Token::String(s)) => Literal::String(s[1..s.len() - 1].into()).into(),
             Some(Token::LeftParen) => {
                 let expr = self.expression()?;
                 self.cursor
@@ -232,21 +236,11 @@ struct Cursor<'a> {
 }
 
 impl Cursor<'_> {
-    // fn next(&mut self) -> Option<Token> {
-    //     self.tokens
-    //         .get(self.current)
-    //         .inspect(|_| self.current += 1)
-    //         .cloned()
-    // }
-
-    fn peek(&self) -> Option<&Token> {
-        self.lexemes.get(self.current).map(|lex| &lex.token)
-    }
-
-    fn next_if(&mut self, func: impl FnOnce(&Token) -> bool) -> Option<Token> {
-        self.peek()
+    fn next_if(&mut self, func: impl FnOnce(&Token) -> bool) -> Option<Lexeme> {
+        self.lexemes
+            .get(self.current)
+            .filter(|lex| func(&lex.token))
             .cloned()
-            .filter(func)
             .inspect(|_| self.current += 1)
     }
 
