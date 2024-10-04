@@ -67,9 +67,19 @@ fn binary(expr: &Binary) -> Result<Value, EvalError> {
         Token::Minus => Value::Number(
             left.as_number().ok_or_else(expect_num)? - right.as_number().ok_or_else(expect_num)?,
         ),
-        Token::Slash => Value::Number(
-            left.as_number().ok_or_else(expect_num)? / right.as_number().ok_or_else(expect_num)?,
-        ),
+        Token::Slash => {
+            let dividend = left.as_number().ok_or_else(expect_num)?;
+            let divisor = right.as_number().ok_or_else(expect_num)?;
+
+            if divisor == 0.0 {
+                return Err(EvalError {
+                    span: expr.operator.span.range.clone(),
+                    msg: "division by zero".into(),
+                });
+            }
+
+            Value::Number(dividend / divisor)
+        }
         Token::Star => Value::Number(
             left.as_number().ok_or_else(expect_num)? * right.as_number().ok_or_else(expect_num)?,
         ),
