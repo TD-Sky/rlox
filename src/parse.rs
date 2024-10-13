@@ -1,3 +1,16 @@
+//! # 求值次序（从低到高）
+//!
+//! expression
+//! equality
+//! comparison
+//! term
+//! factor
+//! unary
+//! primary
+//!
+//! 低次序的规则包裹着高次序的规则，
+//! 这样就能以极其简单的方式实现次序关系，同时还完成了解析。
+
 use std::ops::Range;
 
 use crate::{
