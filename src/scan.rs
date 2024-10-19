@@ -304,7 +304,7 @@ pub struct ScanError {
 /// ALPHA       -> "a" ... "z" | "A" ... "Z" | "_" ;
 /// DIGIT       -> "0" ... "9" ;
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     /// `(`
     LeftParen,

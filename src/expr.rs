@@ -141,3 +141,9 @@ impl From<Conditional> for Expr {
         Self::Conditional(Box::new(expr))
     }
 }
+
+impl From<Variable> for Expr {
+    fn from(var: Variable) -> Self {
+        Self::Variable(var)
+    }
+}

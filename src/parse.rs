@@ -14,9 +14,9 @@
 use std::ops::Range;
 
 use crate::{
-    expr::{Binary, Conditional, Expr, Grouping, Literal, Unary},
+    expr::{Assign, Binary, Conditional, Expr, Grouping, Literal, Unary, Variable},
     scan::{Lexeme, Span, Token},
-    stmt::Stmt,
+    stmt::{Stmt, Var},
 };
 
 #[derive(Debug)]
@@ -46,28 +46,86 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
-        let kind = if self.cursor.next_if(|t| matches!(t, Token::Print)).is_some() {
-            Stmt::Print
-        } else {
-            Stmt::Expr
+        let stmt = match self
+            .cursor
+            .next_if(|t| matches!(t, Token::Print | Token::Var))
+        {
+            Some(t) if t.token == Token::Print => {
+                let value = self.expression()?;
+                self.semicolon()?;
+                Stmt::Print(value)
+            }
+            Some(t) if t.token == Token::Var => self.declaration()?,
+            None => {
+                let expr = self.expression()?;
+                self.semicolon()?;
+                Stmt::Expr(expr)
+            }
+            _ => unreachable!(),
         };
 
-        let expr = self.expression()?;
+        Ok(stmt)
+    }
+
+    fn declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self
+            .cursor
+            .next_if(|t| matches!(t, Token::Identifier(_)))
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span().range.clone(),
+                msg: "Expect variable name".into(),
+            })?;
+
+        let init = if self.cursor.next_if(|t| matches!(t, Token::Equal)).is_some() {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+
+        self.semicolon()?;
+
+        Ok(Var { name, init }.into())
+    }
+
+    fn semicolon(&mut self) -> Result<Lexeme, ParseError> {
         self.cursor
             .next_if(|t| matches!(t, Token::Semicolon))
             .ok_or_else(|| ParseError {
                 span: self.cursor.next_span().range.clone(),
                 msg: "expect `;` after value".into(),
-            })?;
-
-        Ok(kind(expr))
+            })
     }
 
     /// ```text
     /// expression -> assignment
     /// ```
     pub fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.conditional()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, ParseError> {
+        let expr = self.equality()?;
+
+        if let Some(equals) = self.cursor.next_if(|t| matches!(t, Token::Equal)) {
+            let value = self.assignment()?;
+
+            return if let Expr::Variable(var) = expr {
+                Ok(Expr::Assign(
+                    Assign {
+                        name: var.name,
+                        value,
+                    }
+                    .into(),
+                ))
+            } else {
+                Err(ParseError {
+                    span: equals.span.range.clone(),
+                    msg: "invalid assignment target".into(),
+                })
+            };
+        }
+
+        Ok(expr)
     }
 
     /// ```text
@@ -183,27 +241,27 @@ impl<'a> Parser<'a> {
     ///           | "super" "." IDENTIFIER
     /// ```
     fn primary(&mut self) -> Result<Expr, ParseError> {
-        let expr = match self
-            .cursor
-            .next_if(|t| {
-                matches!(
-                    t,
-                    Token::False
-                        | Token::True
-                        | Token::Nil
-                        | Token::Number(_)
-                        | Token::String(_)
-                        | Token::LeftParen
-                )
-            })
-            .map(|lex| lex.token)
-        {
-            Some(Token::True) => Literal::Bool(true).into(),
-            Some(Token::False) => Literal::Bool(false).into(),
-            Some(Token::Nil) => Literal::Null.into(),
-            Some(Token::Number(x)) => Literal::Number(x).into(),
-            Some(Token::String(s)) => Literal::String(s[1..s.len() - 1].into()).into(),
-            Some(Token::LeftParen) => {
+        let Some(lex) = self.cursor.next_if(|t| {
+            matches!(
+                t,
+                Token::False
+                    | Token::True
+                    | Token::Nil
+                    | Token::Number(_)
+                    | Token::String(_)
+                    | Token::LeftParen
+                    | Token::Identifier(_)
+            )
+        }) else {
+            todo!()
+        };
+        let expr = match &lex.token {
+            Token::True => Literal::Bool(true).into(),
+            Token::False => Literal::Bool(false).into(),
+            Token::Nil => Literal::Null.into(),
+            Token::Number(x) => Literal::Number(*x).into(),
+            Token::String(s) => Literal::String(s[1..s.len() - 1].into()).into(),
+            Token::LeftParen => {
                 let expr = self.expression()?;
                 self.cursor
                     .next_if(|t| matches!(t, Token::RightParen))
@@ -213,7 +271,8 @@ impl<'a> Parser<'a> {
                     })?;
                 Grouping { expression: expr }.into()
             }
-            _ => todo!(),
+            Token::Identifier(_) => Variable { name: lex }.into(),
+            _ => unreachable!(),
         };
 
         Ok(expr)
@@ -222,6 +281,7 @@ impl<'a> Parser<'a> {
     /// ```text
     /// comma -> expression ("," expression)*
     /// ```
+    #[allow(dead_code)]
     fn comma(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.equality()?;
 
@@ -240,6 +300,7 @@ impl<'a> Parser<'a> {
     /// ```text
     /// conditional -> equality ( "?" expression ":" conditional )?
     /// ```
+    #[allow(dead_code)]
     fn conditional(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.equality()?;
 

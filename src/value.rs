@@ -2,7 +2,7 @@ use smol_str::SmolStr;
 
 use crate::expr::Literal;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Bool(bool),
     Number(f64),

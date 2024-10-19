@@ -11,7 +11,7 @@ pub use value::Value;
 use std::path::Path;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use eval::{eval, interpret};
+use eval::Interpreter;
 use parse::Parser;
 use scan::Scanner;
 
@@ -58,7 +58,7 @@ pub fn run(path: &Path, source: &str) {
         }
     };
 
-    if let Err(e) = interpret(&stmts) {
+    if let Err(e) = Interpreter::default().interpret(&stmts) {
         let path = path.to_string_lossy();
         let path: &str = path.as_ref();
 
@@ -111,7 +111,7 @@ pub fn rep(source: &str) {
         }
     };
 
-    match eval(&expr) {
+    match Interpreter::default().eval(&expr) {
         Ok(value) => {
             println!("{value:#?}")
         }
