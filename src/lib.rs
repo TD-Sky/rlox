@@ -3,44 +3,91 @@ mod eval;
 mod expr;
 mod parse;
 mod scan;
+mod stmt;
 mod value;
+
+pub use value::Value;
 
 use std::path::Path;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use eval::eval;
+use eval::{eval, interpret};
 use parse::Parser;
 use scan::Scanner;
-pub use value::Value;
 
-pub fn run(path: Option<&Path>, source: &str) {
+pub fn run(path: &Path, source: &str) {
     let scanner = Scanner::new(source);
     let lexemes = match scanner.scan() {
         Ok(lexemes) => lexemes,
         Err(e) => {
-            if let Some(path) = path.map(Path::to_string_lossy) {
-                let path: &str = path.as_ref();
+            let path = path.to_string_lossy();
+            let path: &str = path.as_ref();
 
-                Report::build(ReportKind::Error, path, e.offset)
-                    .with_label(
-                        Label::new((path, e.span))
-                            .with_message(e.msg)
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint((path, Source::from(source)))
-                    .unwrap()
-            } else {
-                Report::build(ReportKind::Error, (), e.offset)
-                    .with_label(
-                        Label::new(e.span)
-                            .with_message(e.msg)
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(Source::from(source))
-                    .unwrap()
-            }
+            Report::build(ReportKind::Error, path, e.offset)
+                .with_label(
+                    Label::new((path, e.span))
+                        .with_message(e.msg)
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .eprint((path, Source::from(source)))
+                .unwrap();
+
+            return;
+        }
+    };
+
+    let mut parser = Parser::new(&lexemes);
+    let stmts = match parser.parse() {
+        Ok(stmts) => stmts,
+        Err(e) => {
+            let path = path.to_string_lossy();
+            let path: &str = path.as_ref();
+
+            Report::build(ReportKind::Error, path, e.span.start)
+                .with_label(
+                    Label::new((path, e.span))
+                        .with_message(e.msg)
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .eprint((path, Source::from(source)))
+                .unwrap();
+
+            return;
+        }
+    };
+
+    if let Err(e) = interpret(&stmts) {
+        let path = path.to_string_lossy();
+        let path: &str = path.as_ref();
+
+        Report::build(ReportKind::Error, path, e.span.start)
+            .with_label(
+                Label::new((path, e.span))
+                    .with_message(e.msg)
+                    .with_color(Color::Red),
+            )
+            .finish()
+            .eprint((path, Source::from(source)))
+            .unwrap();
+    }
+}
+
+pub fn rep(source: &str) {
+    let scanner = Scanner::new(source);
+    let lexemes = match scanner.scan() {
+        Ok(lexemes) => lexemes,
+        Err(e) => {
+            Report::build(ReportKind::Error, (), e.offset)
+                .with_label(
+                    Label::new(e.span)
+                        .with_message(e.msg)
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .eprint(Source::from(source))
+                .unwrap();
 
             return;
         }
@@ -50,29 +97,15 @@ pub fn run(path: Option<&Path>, source: &str) {
     let expr = match parser.expression() {
         Ok(expr) => expr,
         Err(e) => {
-            if let Some(path) = path.map(Path::to_string_lossy) {
-                let path: &str = path.as_ref();
-
-                Report::build(ReportKind::Error, path, e.span.start)
-                    .with_label(
-                        Label::new((path, e.span))
-                            .with_message(e.msg)
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint((path, Source::from(source)))
-                    .unwrap()
-            } else {
-                Report::build(ReportKind::Error, (), e.span.start)
-                    .with_label(
-                        Label::new(e.span)
-                            .with_message(e.msg)
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(Source::from(source))
-                    .unwrap()
-            }
+            Report::build(ReportKind::Error, (), e.span.start)
+                .with_label(
+                    Label::new(e.span)
+                        .with_message(e.msg)
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .eprint(Source::from(source))
+                .unwrap();
 
             return;
         }
@@ -82,30 +115,14 @@ pub fn run(path: Option<&Path>, source: &str) {
         Ok(value) => {
             println!("{value:#?}")
         }
-        Err(e) => {
-            if let Some(path) = path.map(Path::to_string_lossy) {
-                let path: &str = path.as_ref();
-
-                Report::build(ReportKind::Error, path, e.span.start)
-                    .with_label(
-                        Label::new((path, e.span))
-                            .with_message(e.msg)
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint((path, Source::from(source)))
-                    .unwrap()
-            } else {
-                Report::build(ReportKind::Error, (), e.span.start)
-                    .with_label(
-                        Label::new(e.span)
-                            .with_message(e.msg)
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(Source::from(source))
-                    .unwrap()
-            }
-        }
+        Err(e) => Report::build(ReportKind::Error, (), e.span.start)
+            .with_label(
+                Label::new(e.span)
+                    .with_message(e.msg)
+                    .with_color(Color::Red),
+            )
+            .finish()
+            .eprint(Source::from(source))
+            .unwrap(),
     }
 }

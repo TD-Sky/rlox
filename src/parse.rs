@@ -16,6 +16,7 @@ use std::ops::Range;
 use crate::{
     expr::{Binary, Conditional, Expr, Grouping, Literal, Unary},
     scan::{Lexeme, Span, Token},
+    stmt::Stmt,
 };
 
 #[derive(Debug)]
@@ -34,6 +35,32 @@ impl<'a> Parser<'a> {
                 current: 0,
             },
         }
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        let mut stmts = vec![];
+        while !self.cursor.is_at_end() {
+            stmts.push(self.statement()?);
+        }
+        Ok(stmts)
+    }
+
+    fn statement(&mut self) -> Result<Stmt, ParseError> {
+        let kind = if self.cursor.next_if(|t| matches!(t, Token::Print)).is_some() {
+            Stmt::Print
+        } else {
+            Stmt::Expr
+        };
+
+        let expr = self.expression()?;
+        self.cursor
+            .next_if(|t| matches!(t, Token::Semicolon))
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span().range.clone(),
+                msg: "expect `;` after value".into(),
+            })?;
+
+        Ok(kind(expr))
     }
 
     /// ```text
@@ -262,6 +289,10 @@ impl Cursor<'_> {
             .get(self.current)
             .map(|lex| &lex.span)
             .unwrap_or(&self.eof.span)
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.current == self.lexemes.len()
     }
 }
 

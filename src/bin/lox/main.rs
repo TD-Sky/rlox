@@ -4,7 +4,7 @@ use std::process::exit;
 use anyhow::Context;
 use clap::Parser;
 use rlox::cli::Cli;
-use rlox::run;
+use rlox::{rep, run};
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
@@ -14,21 +14,21 @@ fn main() -> anyhow::Result<()> {
     if let Some(script) = &cli.script {
         let code =
             fs::read_to_string(script).with_context(|| format!("script `{}`", script.display()))?;
-        run(Some(script), &code);
+        run(script, &code);
     } else {
-        prompt()?;
+        repl()?;
     }
 
     Ok(())
 }
 
-fn prompt() -> rustyline::Result<()> {
+fn repl() -> rustyline::Result<()> {
     let mut rl = DefaultEditor::new()?;
     loop {
         match rl.readline("> ") {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                run(None, &line);
+                rep(&line);
             }
             Err(ReadlineError::Eof) => return Ok(()),
             Err(ReadlineError::Interrupted) => {

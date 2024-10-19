@@ -2,7 +2,23 @@ use std::ops::Range;
 
 use smol_str::SmolStrBuilder;
 
-use crate::{expr::*, scan::Token, Value};
+use crate::{expr::*, scan::Token, stmt::Stmt, Value};
+
+pub fn interpret(stmts: &[Stmt]) -> Result<(), EvalError> {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Expr(expr) => {
+                eval(expr)?;
+            }
+            Stmt::Print(expr) => {
+                let value = eval(expr)?;
+                println!("{value}");
+            }
+        }
+    }
+
+    Ok(())
+}
 
 pub fn eval(expr: &Expr) -> Result<Value, EvalError> {
     match expr {
