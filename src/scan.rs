@@ -310,9 +310,9 @@ pub enum Token {
     LeftParen,
     /// `)`
     RightParen,
-    /// `[`
+    /// `{`
     LeftBrace,
-    /// `]`
+    /// `}`
     RightBrace,
     /// `,`
     Comma,

@@ -16,7 +16,7 @@ use std::ops::Range;
 use crate::{
     expr::{Assign, Binary, Conditional, Expr, Grouping, Literal, Unary, Variable},
     scan::{Lexeme, Span, Token},
-    stmt::{Stmt, Var},
+    stmt::{Block, Stmt, Var},
 };
 
 #[derive(Debug)]
@@ -48,7 +48,7 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         let stmt = match self
             .cursor
-            .next_if(|t| matches!(t, Token::Print | Token::Var))
+            .next_if(|t| matches!(t, Token::Print | Token::Var | Token::LeftBrace))
         {
             Some(t) if t.token == Token::Print => {
                 let value = self.expression()?;
@@ -56,6 +56,7 @@ impl<'a> Parser<'a> {
                 Stmt::Print(value)
             }
             Some(t) if t.token == Token::Var => self.declaration()?,
+            Some(t) if t.token == Token::LeftBrace => self.block()?,
             None => {
                 let expr = self.expression()?;
                 self.semicolon()?;
@@ -85,6 +86,27 @@ impl<'a> Parser<'a> {
         self.semicolon()?;
 
         Ok(Var { name, init }.into())
+    }
+
+    fn block(&mut self) -> Result<Stmt, ParseError> {
+        let mut stmts = vec![];
+
+        while self
+            .cursor
+            .peek()
+            .is_some_and(|lex| lex.token != Token::RightBrace)
+        {
+            stmts.push(self.statement()?);
+        }
+
+        self.cursor
+            .next_if(|t| matches!(t, Token::RightBrace))
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span().range.clone(),
+                msg: "expect `}` after block".into(),
+            })?;
+
+        Ok(Block { stmts }.into())
     }
 
     fn semicolon(&mut self) -> Result<Lexeme, ParseError> {
@@ -337,6 +359,10 @@ struct Cursor<'a> {
 }
 
 impl Cursor<'_> {
+    fn peek(&self) -> Option<&Lexeme> {
+        self.lexemes.get(self.current)
+    }
+
     fn next_if(&mut self, func: impl FnOnce(&Token) -> bool) -> Option<Lexeme> {
         self.lexemes
             .get(self.current)

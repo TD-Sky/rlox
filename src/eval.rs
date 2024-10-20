@@ -1,8 +1,10 @@
-use core::panic;
-use std::{collections::HashMap, ops::Range};
+use std::collections::HashMap;
+use std::mem;
+use std::ops::Range;
 
 use smol_str::{SmolStr, SmolStrBuilder};
 
+use crate::stmt::Block;
 use crate::{
     expr::*,
     scan::{Lexeme, Token},
@@ -12,7 +14,7 @@ use crate::{
 
 #[derive(Debug, Default)]
 pub struct Interpreter {
-    env: Env,
+    env: Box<Env>,
 }
 
 impl Interpreter {
@@ -33,9 +35,25 @@ impl Interpreter {
                     };
                     self.env.define(&var.name, value);
                 }
+                Stmt::Block(block) => self.block(block)?,
             }
         }
 
+        Ok(())
+    }
+
+    fn block(&mut self, block: &Block) -> Result<(), EvalError> {
+        let scope = Box::new(Env::default());
+        let previous = mem::replace(&mut self.env, scope);
+        self.env.enclosing = Some(previous);
+
+        self.interpret(&block.stmts)?;
+
+        self.env = self
+            .env
+            .enclosing
+            .take()
+            .expect("there must be enclosing environment");
         Ok(())
     }
 
@@ -166,6 +184,7 @@ pub struct EvalError {
 #[derive(Debug, Default)]
 pub struct Env {
     values: HashMap<SmolStr, Value>,
+    enclosing: Option<Box<Self>>,
 }
 
 impl Env {
@@ -196,9 +215,15 @@ impl Env {
             panic!("expected Identifier");
         };
 
-        self.values.get(s).cloned().ok_or_else(|| EvalError {
-            span: name.span.range.clone(),
-            msg: format!("undefined variable {s}"),
-        })
+        if let Some(v) = self.values.get(s).cloned() {
+            Ok(v)
+        } else if let Some(env) = &self.enclosing {
+            env.get(name)
+        } else {
+            Err(EvalError {
+                span: name.span.range.clone(),
+                msg: format!("undefined variable {s}"),
+            })
+        }
     }
 }
