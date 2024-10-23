@@ -1,22 +1,11 @@
-//! # 求值次序（从低到高）
-//!
-//! expression
-//! equality
-//! comparison
-//! term
-//! factor
-//! unary
-//! primary
-//!
-//! 低次序的规则包裹着高次序的规则，
-//! 这样就能以极其简单的方式实现次序关系，同时还完成了解析。
-
 use std::ops::Range;
 
 use crate::{
-    expr::{Assign, Binary, Conditional, Expr, Grouping, Literal, Unary, Variable},
+    parse::{
+        expr::{Assign, Binary, Conditional, Expr, Grouping, Literal, Unary, Variable},
+        stmt::{Block, Stmt, Var},
+    },
     scan::{Lexeme, Span, Token},
-    stmt::{Block, Stmt, Var},
 };
 
 #[derive(Debug)]
@@ -37,6 +26,31 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// 尽可能的解析语句，遇到纯表达式的情况恢复到最后一次成功后的位置并返回
+    pub fn parse_ass(&mut self) -> Result<(Vec<Stmt>, usize), ParseError> {
+        let mut last_ok = self.cursor.current;
+        let mut stmts = vec![];
+        while !self.cursor.is_at_end() {
+            match self.statement() {
+                Ok(s) => {
+                    stmts.push(s);
+                    last_ok = self.cursor.current;
+                }
+                Err(e) => {
+                    self.cursor.current = last_ok;
+                    if self.cursor.peek().is_some_and(|lex| {
+                        matches!(lex.token, Token::Print | Token::Var | Token::LeftBrace)
+                    }) {
+                        return Err(e);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok((stmts, self.cursor.nrest()))
+    }
+
     pub fn parse(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut stmts = vec![];
         while !self.cursor.is_at_end() {
@@ -45,16 +59,44 @@ impl<'a> Parser<'a> {
         Ok(stmts)
     }
 
+    /// # 求值次序（从低到高）
+    ///
+    /// expression
+    /// comma
+    /// assignment
+    /// conditional
+    /// equality
+    /// comparison
+    /// term
+    /// factor
+    /// unary
+    /// primary
+    ///
+    /// 低次序的规则包裹着高次序的规则，
+    /// 这样就能以极其简单的方式实现次序关系，同时还完成了解析。
+    ///
+    /// # rule
+    ///
+    /// ```text
+    /// expression -> assignment
+    /// ```
+    pub fn expression(&mut self) -> Result<Expr, ParseError> {
+        self.comma()
+    }
+}
+
+impl<'a> Parser<'a> {
+    /// ```text
+    /// statement -> varDecl | printStmt | exprStmt | block
+    ///
+    /// exprStmt -> expression ";"
+    /// ```
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         let stmt = match self
             .cursor
             .next_if(|t| matches!(t, Token::Print | Token::Var | Token::LeftBrace))
         {
-            Some(t) if t.token == Token::Print => {
-                let value = self.expression()?;
-                self.semicolon()?;
-                Stmt::Print(value)
-            }
+            Some(t) if t.token == Token::Print => self.print()?,
             Some(t) if t.token == Token::Var => self.declaration()?,
             Some(t) if t.token == Token::LeftBrace => self.block()?,
             None => {
@@ -68,6 +110,18 @@ impl<'a> Parser<'a> {
         Ok(stmt)
     }
 
+    /// ```text
+    /// printStmt -> "print" expression ";"
+    /// ```
+    fn print(&mut self) -> Result<Stmt, ParseError> {
+        let value = self.expression()?;
+        self.semicolon()?;
+        Ok(Stmt::Print(value))
+    }
+
+    /// ```text
+    /// varDecl -> "var" IDENTIFIER ( "=" expression )? ";"
+    /// ```
     fn declaration(&mut self) -> Result<Stmt, ParseError> {
         let name = self
             .cursor
@@ -88,6 +142,9 @@ impl<'a> Parser<'a> {
         Ok(Var { name, init }.into())
     }
 
+    /// ```text
+    /// block -> "{" statement* "}"
+    /// ```
     fn block(&mut self) -> Result<Stmt, ParseError> {
         let mut stmts = vec![];
 
@@ -109,6 +166,7 @@ impl<'a> Parser<'a> {
         Ok(Block { stmts }.into())
     }
 
+    /// 辅助方法，用于解析`;`
     fn semicolon(&mut self) -> Result<Lexeme, ParseError> {
         self.cursor
             .next_if(|t| matches!(t, Token::Semicolon))
@@ -119,14 +177,10 @@ impl<'a> Parser<'a> {
     }
 
     /// ```text
-    /// expression -> assignment
+    /// assignment -> ( call "." )? IDENTIFIER "=" assignment | conditional
     /// ```
-    pub fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.assignment()
-    }
-
     fn assignment(&mut self) -> Result<Expr, ParseError> {
-        let expr = self.equality()?;
+        let expr = self.conditional()?;
 
         if let Some(equals) = self.cursor.next_if(|t| matches!(t, Token::Equal)) {
             let value = self.assignment()?;
@@ -275,7 +329,7 @@ impl<'a> Parser<'a> {
                     | Token::Identifier(_)
             )
         }) else {
-            todo!()
+            unreachable!();
         };
         let expr = match &lex.token {
             Token::True => Literal::Bool(true).into(),
@@ -301,11 +355,10 @@ impl<'a> Parser<'a> {
     }
 
     /// ```text
-    /// comma -> expression ("," expression)*
+    /// comma -> assignment ("," expression)*
     /// ```
-    #[allow(dead_code)]
     fn comma(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.equality()?;
+        let mut expr = self.assignment()?;
 
         while let Some(comma) = self.cursor.next_if(|t| matches!(t, Token::Comma)) {
             expr = Binary {
@@ -322,17 +375,13 @@ impl<'a> Parser<'a> {
     /// ```text
     /// conditional -> equality ( "?" expression ":" conditional )?
     /// ```
-    #[allow(dead_code)]
     fn conditional(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.equality()?;
 
-        if self
-            .cursor
-            .next_if(|t| matches!(t, Token::Question))
-            .is_some()
-        {
+        if let Some(question) = self.cursor.next_if(|t| matches!(t, Token::Question)) {
             let then = self.expression()?;
-            self.cursor
+            let colon = self
+                .cursor
                 .next_if(|t| matches!(t, Token::Colon))
                 .ok_or_else(|| ParseError {
                     span: self.cursor.next_span().range.clone(),
@@ -341,7 +390,9 @@ impl<'a> Parser<'a> {
             let or_else = self.conditional()?;
             expr = Conditional {
                 cond: expr,
+                question,
                 then,
+                colon,
                 or_else,
             }
             .into()
@@ -378,8 +429,12 @@ impl Cursor<'_> {
             .unwrap_or(&self.eof.span)
     }
 
-    fn is_at_end(&self) -> bool {
+    const fn is_at_end(&self) -> bool {
         self.current == self.lexemes.len()
+    }
+
+    const fn nrest(&self) -> usize {
+        self.lexemes.len() - self.current
     }
 }
 

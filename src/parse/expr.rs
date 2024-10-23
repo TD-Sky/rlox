@@ -97,7 +97,9 @@ pub struct This {
 #[derive(Debug)]
 pub struct Conditional {
     pub cond: Expr,
+    pub question: Lexeme,
     pub then: Expr,
+    pub colon: Lexeme,
     pub or_else: Expr,
 }
 

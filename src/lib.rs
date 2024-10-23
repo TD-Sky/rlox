@@ -1,19 +1,15 @@
 pub mod cli;
-mod eval;
-mod expr;
+mod exec;
 mod parse;
 mod scan;
-mod stmt;
-mod value;
 
-pub use value::Value;
+pub use exec::{ExecError, Interpreter, Value};
+pub use parse::{ParseError, Parser};
+pub use scan::{Lexeme, ScanError, Scanner};
 
 use std::path::Path;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use eval::Interpreter;
-use parse::Parser;
-use scan::Scanner;
 
 pub fn run(path: &Path, source: &str) {
     let scanner = Scanner::new(source);
@@ -71,58 +67,5 @@ pub fn run(path: &Path, source: &str) {
             .finish()
             .eprint((path, Source::from(source)))
             .unwrap();
-    }
-}
-
-pub fn rep(source: &str) {
-    let scanner = Scanner::new(source);
-    let lexemes = match scanner.scan() {
-        Ok(lexemes) => lexemes,
-        Err(e) => {
-            Report::build(ReportKind::Error, (), e.offset)
-                .with_label(
-                    Label::new(e.span)
-                        .with_message(e.msg)
-                        .with_color(Color::Red),
-                )
-                .finish()
-                .eprint(Source::from(source))
-                .unwrap();
-
-            return;
-        }
-    };
-
-    let mut parser = Parser::new(&lexemes);
-    let expr = match parser.expression() {
-        Ok(expr) => expr,
-        Err(e) => {
-            Report::build(ReportKind::Error, (), e.span.start)
-                .with_label(
-                    Label::new(e.span)
-                        .with_message(e.msg)
-                        .with_color(Color::Red),
-                )
-                .finish()
-                .eprint(Source::from(source))
-                .unwrap();
-
-            return;
-        }
-    };
-
-    match Interpreter::default().eval(&expr) {
-        Ok(value) => {
-            println!("{value:#?}")
-        }
-        Err(e) => Report::build(ReportKind::Error, (), e.span.start)
-            .with_label(
-                Label::new(e.span)
-                    .with_message(e.msg)
-                    .with_color(Color::Red),
-            )
-            .finish()
-            .eprint(Source::from(source))
-            .unwrap(),
     }
 }

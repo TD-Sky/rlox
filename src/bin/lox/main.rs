@@ -1,10 +1,13 @@
+mod repl;
+
 use std::fs;
 use std::process::exit;
 
 use anyhow::Context;
 use clap::Parser;
+use repl::Repl;
 use rlox::cli::Cli;
-use rlox::{rep, run};
+use rlox::run;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
@@ -24,11 +27,12 @@ fn main() -> anyhow::Result<()> {
 
 fn repl() -> rustyline::Result<()> {
     let mut rl = DefaultEditor::new()?;
+    let mut state = Repl::default();
     loop {
         match rl.readline("> ") {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                rep(&line);
+                state.rep(&line);
             }
             Err(ReadlineError::Eof) => return Ok(()),
             Err(ReadlineError::Interrupted) => {
