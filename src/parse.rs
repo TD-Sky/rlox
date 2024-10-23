@@ -37,6 +37,28 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// 尽可能地解析语句，
+    /// 出错时恢复到最后一次解析成功的token的下一位置
+    ///
+    /// # Return
+    ///
+    /// (Vec<Stmt>, usize): 得到的语句，剩余token数
+    pub fn parse_ass(&mut self) -> (Vec<Stmt>, usize) {
+        let mut last_ok = self.cursor.current;
+        let mut stmts = vec![];
+        while !self.cursor.is_at_end() {
+            // 解析块内语句时爆炸了也不关我们事
+            if let Ok(s) = self.statement() {
+                stmts.push(s);
+                last_ok = self.cursor.current;
+            } else {
+                self.cursor.current = last_ok;
+                break;
+            }
+        }
+        (stmts, self.cursor.nrest())
+    }
+
     pub fn parse(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut stmts = vec![];
         while !self.cursor.is_at_end() {
@@ -275,7 +297,7 @@ impl<'a> Parser<'a> {
                     | Token::Identifier(_)
             )
         }) else {
-            todo!()
+            unreachable!();
         };
         let expr = match &lex.token {
             Token::True => Literal::Bool(true).into(),
@@ -378,8 +400,12 @@ impl Cursor<'_> {
             .unwrap_or(&self.eof.span)
     }
 
-    fn is_at_end(&self) -> bool {
+    const fn is_at_end(&self) -> bool {
         self.current == self.lexemes.len()
+    }
+
+    const fn nrest(&self) -> usize {
+        self.lexemes.len() - self.current
     }
 }
 

@@ -6,14 +6,14 @@ mod scan;
 mod stmt;
 mod value;
 
+pub use eval::Interpreter;
+pub use parse::{ParseError, Parser};
+pub use scan::{Lexeme, ScanError, Scanner};
 pub use value::Value;
 
 use std::path::Path;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use eval::Interpreter;
-use parse::Parser;
-use scan::Scanner;
 
 pub fn run(path: &Path, source: &str) {
     let scanner = Scanner::new(source);
