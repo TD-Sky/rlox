@@ -3,7 +3,7 @@ mod exec;
 mod parse;
 mod scan;
 
-pub use exec::{EvalError, Interpreter, Value};
+pub use exec::{ExecError, Interpreter, Value};
 pub use parse::{ParseError, Parser};
 pub use scan::{Lexeme, ScanError, Scanner};
 
