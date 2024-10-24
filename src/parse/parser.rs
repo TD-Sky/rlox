@@ -14,9 +14,11 @@
 use std::ops::Range;
 
 use crate::{
-    expr::{Assign, Binary, Conditional, Expr, Grouping, Literal, Unary, Variable},
+    parse::{
+        expr::{Assign, Binary, Conditional, Expr, Grouping, Literal, Unary, Variable},
+        stmt::{Block, Stmt, Var},
+    },
     scan::{Lexeme, Span, Token},
-    stmt::{Block, Stmt, Var},
 };
 
 #[derive(Debug)]

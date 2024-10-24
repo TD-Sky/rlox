@@ -1,15 +1,11 @@
 pub mod cli;
-mod eval;
-mod expr;
+mod exec;
 mod parse;
 mod scan;
-mod stmt;
-mod value;
 
-pub use eval::Interpreter;
+pub use exec::{EvalError, Interpreter, Value};
 pub use parse::{ParseError, Parser};
 pub use scan::{Lexeme, ScanError, Scanner};
-pub use value::Value;
 
 use std::path::Path;
 

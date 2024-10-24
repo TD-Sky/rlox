@@ -4,12 +4,10 @@ use std::ops::Range;
 
 use smol_str::{SmolStr, SmolStrBuilder};
 
-use crate::stmt::Block;
 use crate::{
-    expr::*,
+    exec::Value,
+    parse::{expr::*, stmt::*},
     scan::{Lexeme, Token},
-    stmt::Stmt,
-    Value,
 };
 
 #[derive(Debug, Default)]
@@ -182,13 +180,13 @@ pub struct EvalError {
 }
 
 #[derive(Debug, Default)]
-pub struct Env {
+struct Env {
     values: HashMap<SmolStr, Value>,
     enclosing: Option<Box<Self>>,
 }
 
 impl Env {
-    pub fn define(&mut self, name: &Lexeme, value: Value) {
+    fn define(&mut self, name: &Lexeme, value: Value) {
         let Token::Identifier(s) = &name.token else {
             panic!("expected Identifier");
         };
@@ -196,7 +194,7 @@ impl Env {
         self.values.insert(s.clone(), value);
     }
 
-    pub fn assign(&mut self, name: &Lexeme, value: Value) -> Result<(), EvalError> {
+    fn assign(&mut self, name: &Lexeme, value: Value) -> Result<(), EvalError> {
         let Token::Identifier(s) = &name.token else {
             panic!("expected Identifier");
         };
@@ -210,7 +208,7 @@ impl Env {
         Ok(())
     }
 
-    pub fn get(&self, name: &Lexeme) -> Result<Value, EvalError> {
+    fn get(&self, name: &Lexeme) -> Result<Value, EvalError> {
         let Token::Identifier(s) = &name.token else {
             panic!("expected Identifier");
         };

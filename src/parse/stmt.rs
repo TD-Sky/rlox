@@ -1,4 +1,4 @@
-use crate::{expr::Expr, scan::Lexeme};
+use crate::{parse::expr::Expr, scan::Lexeme};
 
 #[derive(Debug)]
 pub enum Stmt {
