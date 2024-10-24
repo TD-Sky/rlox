@@ -107,7 +107,7 @@ impl Interpreter {
         };
 
         let value = match expr.operator.token {
-            Token::Equal => Value::Bool(left == right),
+            Token::EqualEqual => Value::Bool(left == right),
             Token::BangEqual => Value::Bool(left != right),
             Token::Greater => Value::Bool(
                 left.as_number().ok_or_else(expect_num)?
