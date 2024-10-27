@@ -11,7 +11,7 @@ impl Repl {
         let tokens = match Scanner::new(input).scan() {
             Ok(tokens) => tokens,
             Err(e) => {
-                Report::build(ReportKind::Error, (), e.offset)
+                Report::build(ReportKind::Error, e.span.clone())
                     .with_label(
                         Label::new(e.span)
                             .with_message(e.msg)
@@ -26,7 +26,7 @@ impl Repl {
         };
 
         let report_parse_error = |e: ParseError| {
-            Report::build(ReportKind::Error, (), e.span.start)
+            Report::build(ReportKind::Error, e.span.clone())
                 .with_label(
                     Label::new(e.span)
                         .with_message(e.msg)
@@ -38,7 +38,7 @@ impl Repl {
         };
 
         let report_exec_error = |e: ExecError| {
-            Report::build(ReportKind::Error, (), e.span.start)
+            Report::build(ReportKind::Error, e.span.clone())
                 .with_label(
                     Label::new(e.span)
                         .with_message(e.msg)

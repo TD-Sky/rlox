@@ -19,7 +19,7 @@ pub fn run(path: &Path, source: &str) {
             let path = path.to_string_lossy();
             let path: &str = path.as_ref();
 
-            Report::build(ReportKind::Error, path, e.offset)
+            Report::build(ReportKind::Error, (path, e.span.clone()))
                 .with_label(
                     Label::new((path, e.span))
                         .with_message(e.msg)
@@ -40,7 +40,7 @@ pub fn run(path: &Path, source: &str) {
             let path = path.to_string_lossy();
             let path: &str = path.as_ref();
 
-            Report::build(ReportKind::Error, path, e.span.start)
+            Report::build(ReportKind::Error, (path, e.span.clone()))
                 .with_label(
                     Label::new((path, e.span))
                         .with_message(e.msg)
@@ -58,7 +58,7 @@ pub fn run(path: &Path, source: &str) {
         let path = path.to_string_lossy();
         let path: &str = path.as_ref();
 
-        Report::build(ReportKind::Error, path, e.span.start)
+        Report::build(ReportKind::Error, (path, e.span.clone()))
             .with_label(
                 Label::new((path, e.span))
                     .with_message(e.msg)

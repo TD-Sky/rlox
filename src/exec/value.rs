@@ -25,11 +25,12 @@ impl PartialEq for Value {
 impl Eq for Value {}
 
 impl Value {
-    pub fn as_bool(&self) -> Option<bool> {
+    pub fn as_bool(&self) -> bool {
+        // Weak type
         match self {
-            Self::Bool(b) => Some(*b),
-            Self::Null => Some(false), // Weak type
-            _ => None,
+            Self::Bool(b) => *b,
+            Self::Null => false,
+            _ => true,
         }
     }
 

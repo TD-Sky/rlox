@@ -212,6 +212,7 @@ impl<'a> Scanner<'a> {
             "true" => Token::True,
             "var" => Token::Var,
             "while" => Token::While,
+            "break" => Token::Break,
             s => Token::Identifier(s.into()),
         };
 
@@ -386,6 +387,8 @@ pub enum Token {
     Var,
     /// `while`
     While,
+    /// `break`
+    Break,
     /// End of file
     Eof,
 }

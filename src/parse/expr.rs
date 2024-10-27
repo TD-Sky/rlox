@@ -3,15 +3,7 @@ use smol_str::SmolStr;
 use crate::scan::Lexeme;
 
 /// ```text
-/// assignment  -> ( call "." )? IDENTIFIER "=" assignment
-///                | logic_or ;
-///
-/// logic_or    -> logic_and ( "or" logic_and )* ;
-///
-/// logic_and   -> equality ( "and" equality )* ;
-///
-/// call        -> primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
-///
+/// call        -> primary ( "(" arguments? ")" | "." IDENTIFIER )*
 /// ```
 #[derive(Debug)]
 pub enum Expr {
@@ -97,9 +89,7 @@ pub struct This {
 #[derive(Debug)]
 pub struct Conditional {
     pub cond: Expr,
-    pub question: Lexeme,
     pub then: Expr,
-    pub colon: Lexeme,
     pub or_else: Expr,
 }
 

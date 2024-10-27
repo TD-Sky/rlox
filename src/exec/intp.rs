@@ -13,45 +13,18 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct Interpreter {
     env: Box<Env>,
+    ctrls: Vec<ControlFlow>,
 }
 
 impl Interpreter {
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<(), ExecError> {
         for stmt in stmts {
-            match stmt {
-                Stmt::Expr(expr) => {
-                    self.eval(expr)?;
-                }
-                Stmt::Print(expr) => {
-                    let value = self.eval(expr)?;
-                    println!("{value}");
-                }
-                Stmt::Var(var) => {
-                    let value = match &var.init {
-                        Some(expr) => self.eval(expr)?,
-                        None => Value::Null,
-                    };
-                    self.env.define(&var.name, value);
-                }
-                Stmt::Block(block) => self.block(block)?,
+            self.execute(stmt)?;
+            if let Some(ControlFlow::Break) = self.ctrls.last() {
+                break;
             }
         }
 
-        Ok(())
-    }
-
-    fn block(&mut self, block: &Block) -> Result<(), ExecError> {
-        let scope = Box::new(Env::default());
-        let previous = mem::replace(&mut self.env, scope);
-        self.env.enclosing = Some(previous);
-
-        self.interpret(&block.stmts)?;
-
-        self.env = self
-            .env
-            .enclosing
-            .take()
-            .expect("there must be enclosing environment");
         Ok(())
     }
 
@@ -72,6 +45,59 @@ impl Interpreter {
         }
     }
 
+    fn break_stmt(&mut self, stmt: &Break) -> Result<(), ExecError> {
+        match self.ctrls.last_mut() {
+            Some(status) if *status == ControlFlow::Looping => {
+                *status = ControlFlow::Break;
+                Ok(())
+            }
+            None => Err(ExecError {
+                span: stmt.token.span.range.clone(),
+                msg: "`break` should be used inside looping".into(),
+            }),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Interpreter {
+    fn execute(&mut self, stmt: &Stmt) -> Result<(), ExecError> {
+        match stmt {
+            Stmt::Expr(expr) => {
+                self.eval(expr)?;
+            }
+            Stmt::Print(expr) => {
+                let value = self.eval(expr)?;
+                println!("{value}");
+            }
+            Stmt::Var(var) => self.declare(var)?,
+            Stmt::Block(block) => self.block(block)?,
+            Stmt::If(stmt) => self.if_stmt(stmt)?,
+            Stmt::While(stmt) => self.while_stmt(stmt)?,
+            Stmt::For(stmt) => self.for_stmt(stmt)?,
+            Stmt::Break(stmt) => self.break_stmt(stmt)?,
+        };
+
+        Ok(())
+    }
+
+    fn declare(&mut self, var: &Var) -> Result<(), ExecError> {
+        let value = match &var.init {
+            Some(expr) => self.eval(expr)?,
+            None => Value::Null,
+        };
+        self.env.define(&var.name, value);
+
+        Ok(())
+    }
+
+    fn block(&mut self, block: &Block) -> Result<(), ExecError> {
+        self.enter_env();
+        let res = self.interpret(&block.stmts);
+        self.leave_env();
+        res
+    }
+
     fn grouping(&mut self, expr: &Grouping) -> Result<Value, ExecError> {
         self.eval(&expr.expression)
     }
@@ -84,10 +110,7 @@ impl Interpreter {
         let right = self.eval(&expr.right)?;
 
         let value = match expr.operator.token {
-            Token::Bang => Value::Bool(!right.as_bool().ok_or_else(|| ExecError {
-                span: expr.operator.span.range.clone(),
-                msg: "expected boolean/null as operand".into(),
-            })?),
+            Token::Bang => Value::Bool(!right.as_bool()),
             Token::Minus => Value::Number(-right.as_number().ok_or_else(|| ExecError {
                 span: expr.operator.span.range.clone(),
                 msg: "expected number as operand".into(),
@@ -99,6 +122,29 @@ impl Interpreter {
     }
 
     fn binary(&mut self, expr: &Binary) -> Result<Value, ExecError> {
+        match expr.operator.token {
+            Token::Or => {
+                let left = self.eval(&expr.left)?;
+                if left.as_bool() {
+                    return Ok(left);
+                }
+                let right = self.eval(&expr.right)?;
+                if right.as_bool() {
+                    return Ok(right);
+                }
+                return Ok(Value::Bool(false));
+            }
+            Token::And => {
+                let left = self.eval(&expr.left)?;
+                if !left.as_bool() {
+                    return Ok(Value::Bool(false));
+                }
+                let right = self.eval(&expr.right)?;
+                return Ok(Value::Bool(right.as_bool()));
+            }
+            _ => (),
+        }
+
         let left = self.eval(&expr.left)?;
         let right = self.eval(&expr.right)?;
 
@@ -177,22 +223,136 @@ impl Interpreter {
     fn conditional(&mut self, expr: &Conditional) -> Result<Value, ExecError> {
         let Conditional {
             cond,
-            question,
             then,
-            colon: _,
             or_else,
         } = expr;
 
-        let Some(bvalue) = self.eval(cond)?.as_bool() else {
-            return Err(ExecError {
-                span: question.span.range.clone(),
-                msg: "expected bool expression".into(),
-            });
+        let expr = if self.eval(cond)?.as_bool() {
+            then
+        } else {
+            or_else
         };
 
-        let expr = if bvalue { then } else { or_else };
-
         self.eval(expr)
+    }
+
+    fn if_stmt(&mut self, stmt: &If) -> Result<(), ExecError> {
+        let If {
+            condition,
+            then_branch,
+            else_branch,
+        } = stmt;
+
+        if self.eval(condition)?.as_bool() {
+            self.execute(then_branch)?;
+        } else if let Some(stmt) = else_branch {
+            self.execute(stmt)?;
+        }
+
+        Ok(())
+    }
+
+    fn while_stmt(&mut self, stmt: &While) -> Result<(), ExecError> {
+        let While { condition, body } = stmt;
+
+        self.ctrls.push(ControlFlow::Looping);
+
+        let res = || -> Result<(), ExecError> {
+            while self.eval(condition)?.as_bool() {
+                self.execute(body)?;
+                if let Some(ControlFlow::Break) = self.ctrls.last() {
+                    break;
+                }
+            }
+
+            Ok(())
+        }();
+
+        self.ctrls.pop();
+
+        res
+    }
+
+    fn for_stmt(&mut self, stmt: &For) -> Result<(), ExecError> {
+        let For {
+            init,
+            condition,
+            change,
+            body,
+        } = stmt;
+
+        let mut new_env = false;
+        match init {
+            Some(Stmt::Var(var)) => {
+                self.enter_env();
+                self.declare(var).inspect_err(|_| self.leave_env())?;
+                new_env = true;
+            }
+            Some(Stmt::Expr(expr)) => {
+                self.eval(expr)?;
+            }
+            _ => (),
+        }
+
+        self.ctrls.push(ControlFlow::Looping);
+
+        let res = || -> Result<(), ExecError> {
+            match (condition, change) {
+                (Some(condition), Some(change)) => {
+                    while self.eval(condition)?.as_bool() {
+                        self.execute(body)?;
+                        if let Some(ControlFlow::Break) = self.ctrls.last() {
+                            break;
+                        }
+                        self.eval(change)?;
+                    }
+                }
+                (Some(condition), None) => {
+                    while self.eval(condition)?.as_bool() {
+                        self.execute(body)?;
+                        if let Some(ControlFlow::Break) = self.ctrls.last() {
+                            break;
+                        }
+                    }
+                }
+                (None, Some(change)) => loop {
+                    self.execute(body)?;
+                    if let Some(ControlFlow::Break) = self.ctrls.last() {
+                        break;
+                    }
+                    self.eval(change)?;
+                },
+                (None, None) => loop {
+                    self.execute(body)?;
+                    if let Some(ControlFlow::Break) = self.ctrls.last() {
+                        break;
+                    }
+                },
+            }
+
+            Ok(())
+        }();
+
+        self.ctrls.pop();
+        if new_env {
+            self.leave_env();
+        }
+
+        res
+    }
+
+    fn enter_env(&mut self) {
+        let scope = Box::new(Env::default());
+        let previous = mem::replace(&mut self.env, scope);
+        self.env.enclosing = Some(previous);
+    }
+
+    fn leave_env(&mut self) {
+        self.env = self
+            .env
+            .enclosing
+            .take()
+            .expect("there must be enclosing environment");
     }
 }
 
@@ -222,13 +382,17 @@ impl Env {
             panic!("expected Identifier");
         };
 
-        let var = self.values.get_mut(s).ok_or_else(|| ExecError {
-            span: name.span.range.clone(),
-            msg: format!("undefined variable {s}"),
-        })?;
-        *var = value;
-
-        Ok(())
+        if let Some(v) = self.values.get_mut(s) {
+            *v = value;
+            Ok(())
+        } else if let Some(env) = &mut self.enclosing {
+            env.assign(name, value)
+        } else {
+            Err(ExecError {
+                span: name.span.range.clone(),
+                msg: format!("undefined variable {s}"),
+            })
+        }
     }
 
     fn get(&self, name: &Lexeme) -> Result<Value, ExecError> {
@@ -247,4 +411,10 @@ impl Env {
             })
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ControlFlow {
+    Break,
+    Looping,
 }
