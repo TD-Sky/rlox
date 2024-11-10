@@ -13,15 +13,16 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct Interpreter {
     env: Box<Env>,
-    ctrls: Vec<ControlFlow>,
+    loop_depth: usize,
 }
 
 impl Interpreter {
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<(), ExecError> {
         for stmt in stmts {
-            self.execute(stmt)?;
-            if let Some(ControlFlow::Break) = self.ctrls.last() {
-                break;
+            match self.execute(stmt) {
+                Err(Exception::Error(e)) => return Err(e),
+                Err(Exception::Break) => unreachable!(),
+                _ => (),
             }
         }
 
@@ -44,24 +45,10 @@ impl Interpreter {
             _ => unreachable!(),
         }
     }
-
-    fn break_stmt(&mut self, stmt: &Break) -> Result<(), ExecError> {
-        match self.ctrls.last_mut() {
-            Some(status) if *status == ControlFlow::Looping => {
-                *status = ControlFlow::Break;
-                Ok(())
-            }
-            None => Err(ExecError {
-                span: stmt.token.span.range.clone(),
-                msg: "`break` should be used inside looping".into(),
-            }),
-            _ => unreachable!(),
-        }
-    }
 }
 
 impl Interpreter {
-    fn execute(&mut self, stmt: &Stmt) -> Result<(), ExecError> {
+    fn execute(&mut self, stmt: &Stmt) -> Result<(), Exception> {
         match stmt {
             Stmt::Expr(expr) => {
                 self.eval(expr)?;
@@ -75,7 +62,7 @@ impl Interpreter {
             Stmt::If(stmt) => self.if_stmt(stmt)?,
             Stmt::While(stmt) => self.while_stmt(stmt)?,
             Stmt::For(stmt) => self.for_stmt(stmt)?,
-            Stmt::Break(stmt) => self.break_stmt(stmt)?,
+            Stmt::Break(stmt) => return Err(self.break_stmt(stmt)),
         };
 
         Ok(())
@@ -91,10 +78,19 @@ impl Interpreter {
         Ok(())
     }
 
-    fn block(&mut self, block: &Block) -> Result<(), ExecError> {
+    fn block(&mut self, block: &Block) -> Result<(), Exception> {
         self.enter_env();
-        let res = self.interpret(&block.stmts);
+
+        let res = || -> Result<_, Exception> {
+            for stmt in &block.stmts {
+                self.execute(stmt)?;
+            }
+
+            Ok(())
+        }();
+
         self.leave_env();
+
         res
     }
 
@@ -236,7 +232,7 @@ impl Interpreter {
         self.eval(expr)
     }
 
-    fn if_stmt(&mut self, stmt: &If) -> Result<(), ExecError> {
+    fn if_stmt(&mut self, stmt: &If) -> Result<(), Exception> {
         let If {
             condition,
             then_branch,
@@ -255,20 +251,21 @@ impl Interpreter {
     fn while_stmt(&mut self, stmt: &While) -> Result<(), ExecError> {
         let While { condition, body } = stmt;
 
-        self.ctrls.push(ControlFlow::Looping);
+        self.loop_depth += 1;
 
         let res = || -> Result<(), ExecError> {
             while self.eval(condition)?.as_bool() {
-                self.execute(body)?;
-                if let Some(ControlFlow::Break) = self.ctrls.last() {
-                    break;
+                match self.execute(body) {
+                    Ok(_) => (),
+                    Err(Exception::Break) => break,
+                    Err(Exception::Error(e)) => return Err(e),
                 }
             }
 
             Ok(())
         }();
 
-        self.ctrls.pop();
+        self.loop_depth -= 1;
 
         res
     }
@@ -294,38 +291,42 @@ impl Interpreter {
             _ => (),
         }
 
-        self.ctrls.push(ControlFlow::Looping);
+        self.loop_depth += 1;
 
         let res = || -> Result<(), ExecError> {
             match (condition, change) {
                 (Some(condition), Some(change)) => {
                     while self.eval(condition)?.as_bool() {
-                        self.execute(body)?;
-                        if let Some(ControlFlow::Break) = self.ctrls.last() {
-                            break;
+                        match self.execute(body) {
+                            Ok(_) => (),
+                            Err(Exception::Break) => break,
+                            Err(Exception::Error(e)) => return Err(e),
                         }
                         self.eval(change)?;
                     }
                 }
                 (Some(condition), None) => {
                     while self.eval(condition)?.as_bool() {
-                        self.execute(body)?;
-                        if let Some(ControlFlow::Break) = self.ctrls.last() {
-                            break;
+                        match self.execute(body) {
+                            Ok(_) => (),
+                            Err(Exception::Break) => break,
+                            Err(Exception::Error(e)) => return Err(e),
                         }
                     }
                 }
                 (None, Some(change)) => loop {
-                    self.execute(body)?;
-                    if let Some(ControlFlow::Break) = self.ctrls.last() {
-                        break;
+                    match self.execute(body) {
+                        Ok(_) => (),
+                        Err(Exception::Break) => break,
+                        Err(Exception::Error(e)) => return Err(e),
                     }
                     self.eval(change)?;
                 },
                 (None, None) => loop {
-                    self.execute(body)?;
-                    if let Some(ControlFlow::Break) = self.ctrls.last() {
-                        break;
+                    match self.execute(body) {
+                        Ok(_) => (),
+                        Err(Exception::Break) => break,
+                        Err(Exception::Error(e)) => return Err(e),
                     }
                 },
             }
@@ -333,12 +334,24 @@ impl Interpreter {
             Ok(())
         }();
 
-        self.ctrls.pop();
+        self.loop_depth -= 1;
         if new_env {
             self.leave_env();
         }
 
         res
+    }
+
+    fn break_stmt(&mut self, stmt: &Break) -> Exception {
+        if self.loop_depth > 0 {
+            Exception::Break
+        } else {
+            ExecError {
+                span: stmt.token.span.range.clone(),
+                msg: "`break` should be used inside looping".into(),
+            }
+            .into()
+        }
     }
 
     fn enter_env(&mut self) {
@@ -360,6 +373,18 @@ impl Interpreter {
 pub struct ExecError {
     pub span: Range<usize>,
     pub msg: String,
+}
+
+#[derive(Debug)]
+enum Exception {
+    Break,
+    Error(ExecError),
+}
+
+impl From<ExecError> for Exception {
+    fn from(e: ExecError) -> Self {
+        Self::Error(e)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -411,10 +436,4 @@ impl Env {
             })
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ControlFlow {
-    Break,
-    Looping,
 }
