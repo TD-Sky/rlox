@@ -2,10 +2,7 @@ use smol_str::SmolStr;
 
 use crate::scan::Lexeme;
 
-/// ```text
-/// call        -> primary ( "(" arguments? ")" | "." IDENTIFIER )*
-/// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Assign(Box<Assign>),
     Binary(Box<Binary>),
@@ -22,33 +19,33 @@ pub enum Expr {
     Conditional(Box<Conditional>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Assign {
     pub name: Lexeme,
     pub value: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Binary {
     pub left: Expr,
     pub operator: Lexeme,
     pub right: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Call {
     pub callee: Expr,
     pub paren: Lexeme,
     pub arguments: Vec<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Get {
     pub object: Expr,
     pub name: Lexeme,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Grouping {
     pub expression: Expr,
 }
@@ -61,45 +58,45 @@ pub enum Literal {
     Null,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Logical {
     pub left: Expr,
     pub operator: Lexeme,
     pub right: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Set {
     pub object: Expr,
     pub name: Lexeme,
     pub value: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Super {
     pub keyword: Lexeme,
     pub method: Lexeme,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct This {
     pub keyword: Lexeme,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Conditional {
     pub cond: Expr,
     pub then: Expr,
     pub or_else: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Unary {
     pub operator: Lexeme,
     pub right: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Variable {
     pub name: Lexeme,
 }
@@ -137,5 +134,11 @@ impl From<Conditional> for Expr {
 impl From<Variable> for Expr {
     fn from(var: Variable) -> Self {
         Self::Variable(var)
+    }
+}
+
+impl From<Call> for Expr {
+    fn from(expr: Call) -> Self {
+        Self::Call(Box::new(expr))
     }
 }

@@ -2,6 +2,8 @@ pub mod cli;
 mod exec;
 mod parse;
 mod scan;
+mod span;
+mod utils;
 
 pub use exec::{ExecError, Interpreter, Value};
 pub use parse::{ParseError, Parser};
@@ -40,9 +42,9 @@ pub fn run(path: &Path, source: &str) {
             let path = path.to_string_lossy();
             let path: &str = path.as_ref();
 
-            Report::build(ReportKind::Error, (path, e.span.clone()))
+            Report::build(ReportKind::Error, (path, e.span.range.clone()))
                 .with_label(
-                    Label::new((path, e.span))
+                    Label::new((path, e.span.range))
                         .with_message(e.msg)
                         .with_color(Color::Red),
                 )
@@ -58,9 +60,9 @@ pub fn run(path: &Path, source: &str) {
         let path = path.to_string_lossy();
         let path: &str = path.as_ref();
 
-        Report::build(ReportKind::Error, (path, e.span.clone()))
+        Report::build(ReportKind::Error, (path, e.span.range.clone()))
             .with_label(
-                Label::new((path, e.span))
+                Label::new((path, e.span.range))
                     .with_message(e.msg)
                     .with_color(Color::Red),
             )

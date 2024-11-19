@@ -1,29 +1,42 @@
 use std::collections::HashMap;
 use std::mem;
-use std::ops::Range;
 
 use smol_str::{SmolStr, SmolStrBuilder};
 
+use super::call::{clock, LoxCallable};
 use crate::{
     exec::Value,
     parse::{expr::*, stmt::*},
     scan::{Lexeme, Token},
+    span::{Span, Spanned},
+    utils::RcCell,
 };
 
-#[derive(Debug, Default)]
+thread_local! {
+    static GLOBAL_ENV: RcCell<Env> = RcCell::new(Env::new(
+        [(SmolStr::new("clock"), clock().into())]
+    ));
+}
+
+#[derive(Debug)]
 pub struct Interpreter {
-    env: Box<Env>,
+    env: RcCell<Env>,
     loop_depth: usize,
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self {
+            env: GLOBAL_ENV.with(Clone::clone),
+            loop_depth: 0,
+        }
+    }
 }
 
 impl Interpreter {
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<(), ExecError> {
         for stmt in stmts {
-            match self.execute(stmt) {
-                Err(Exception::Error(e)) => return Err(e),
-                Err(Exception::Break) => unreachable!(),
-                _ => (),
-            }
+            self.execute(stmt)?;
         }
 
         Ok(())
@@ -35,37 +48,40 @@ impl Interpreter {
             Expr::Grouping(expr) => self.grouping(expr),
             Expr::Literal(expr) => Ok(self.literal(expr)),
             Expr::Unary(expr) => self.unary(expr),
-            Expr::Variable(var) => self.env.get(&var.name),
+            Expr::Variable(var) => self.env.borrow().get(&var.name),
             Expr::Assign(expr) => {
                 let value = self.eval(&expr.value)?;
-                self.env.assign(&expr.name, value.clone())?;
+                self.env.borrow_mut().assign(&expr.name, value.clone())?;
                 Ok(value)
             }
             Expr::Conditional(expr) => self.conditional(expr),
+            Expr::Call(expr) => self.call(expr),
             _ => unreachable!(),
         }
     }
 }
 
 impl Interpreter {
-    fn execute(&mut self, stmt: &Stmt) -> Result<(), Exception> {
-        match stmt {
-            Stmt::Expr(expr) => {
-                self.eval(expr)?;
-            }
+    fn execute(&mut self, stmt: &Stmt) -> Result<StmtValue, ExecError> {
+        Ok(match stmt {
+            Stmt::Expr(expr) => return self.eval(expr).map(|_| StmtValue::Finish),
             Stmt::Print(expr) => {
                 let value = self.eval(expr)?;
                 println!("{value}");
+                StmtValue::Finish
             }
-            Stmt::Var(var) => self.declare(var)?,
+            Stmt::Var(var) => return self.declare(var).map(|_| StmtValue::Finish),
             Stmt::Block(block) => self.block(block)?,
             Stmt::If(stmt) => self.if_stmt(stmt)?,
             Stmt::While(stmt) => self.while_stmt(stmt)?,
             Stmt::For(stmt) => self.for_stmt(stmt)?,
-            Stmt::Break(stmt) => return Err(self.break_stmt(stmt)),
-        };
-
-        Ok(())
+            Stmt::Break(stmt) => return self.break_stmt(stmt).map(|_| StmtValue::Break),
+            Stmt::Fun(fun) => {
+                self.declare_fun(fun);
+                StmtValue::Finish
+            }
+            Stmt::Return(rt) => StmtValue::Return(self.return_stmt(rt)?),
+        })
     }
 
     fn declare(&mut self, var: &Var) -> Result<(), ExecError> {
@@ -73,25 +89,45 @@ impl Interpreter {
             Some(expr) => self.eval(expr)?,
             None => Value::Null,
         };
-        self.env.define(&var.name, value);
+        self.env.borrow_mut().define(&var.name, value);
 
         Ok(())
     }
 
-    fn block(&mut self, block: &Block) -> Result<(), Exception> {
+    fn declare_fun(&mut self, fun: &Function) {
+        let lox_fun = LoxFunction::new(fun, &self.env);
+        self.env.borrow_mut().define(&fun.name, lox_fun.into());
+    }
+
+    fn block(&mut self, block: &Block) -> Result<StmtValue, ExecError> {
         self.enter_env();
 
-        let res = || -> Result<_, Exception> {
+        let res = || -> Result<StmtValue, ExecError> {
             for stmt in &block.stmts {
-                self.execute(stmt)?;
+                match self.execute(stmt) {
+                    Ok(StmtValue::Finish) => (),
+                    Ok(StmtValue::Break) => break,
+                    res => return res,
+                }
             }
 
-            Ok(())
+            Ok(StmtValue::Finish)
         }();
 
         self.leave_env();
 
         res
+    }
+
+    /// 自己准备好环境来调用
+    fn fun_block(&mut self, block: &Block) -> Result<Value, ExecError> {
+        for stmt in &block.stmts {
+            if let StmtValue::Return(v) = self.execute(stmt)? {
+                return Ok(v);
+            }
+        }
+
+        Ok(Value::Null)
     }
 
     fn grouping(&mut self, expr: &Grouping) -> Result<Value, ExecError> {
@@ -108,7 +144,7 @@ impl Interpreter {
         let value = match expr.operator.token {
             Token::Bang => Value::Bool(!right.as_bool()),
             Token::Minus => Value::Number(-right.as_number().ok_or_else(|| ExecError {
-                span: expr.operator.span.range.clone(),
+                span: expr.operator.span.clone(),
                 msg: "expected number as operand".into(),
             })?),
             _ => unreachable!(),
@@ -145,7 +181,7 @@ impl Interpreter {
         let right = self.eval(&expr.right)?;
 
         let expect_num = || ExecError {
-            span: expr.operator.span.range.clone(),
+            span: expr.operator.span.clone(),
             msg: "expected number as operand".into(),
         };
 
@@ -178,7 +214,7 @@ impl Interpreter {
 
                 if divisor == 0.0 {
                     return Err(ExecError {
-                        span: expr.operator.span.range.clone(),
+                        span: expr.operator.span.clone(),
                         msg: "division by zero".into(),
                     });
                 }
@@ -197,14 +233,14 @@ impl Interpreter {
                     let mut sb = SmolStrBuilder::new();
                     sb.push_str(&lhs);
                     sb.push_str(rhs.as_str().ok_or_else(|| ExecError {
-                        span: expr.operator.span.range.clone(),
+                        span: expr.operator.span.clone(),
                         msg: "expected string as operand".into(),
                     })?);
                     Value::String(sb.finish())
                 }
                 _ => {
                     return Err(ExecError {
-                        span: expr.operator.span.range.clone(),
+                        span: expr.operator.span.clone(),
                         msg: "expected number/string as operands".into(),
                     })
                 }
@@ -232,7 +268,37 @@ impl Interpreter {
         self.eval(expr)
     }
 
-    fn if_stmt(&mut self, stmt: &If) -> Result<(), Exception> {
+    fn call(&mut self, expr: &Call) -> Result<Value, ExecError> {
+        let callee = self.eval(&expr.callee)?;
+
+        let args = expr
+            .arguments
+            .iter()
+            .map(|arg| self.eval(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let Value::Callable(callee) = callee else {
+            return Err(ExecError {
+                span: expr.callee.span(),
+                msg: "can only call functions and classes".into(),
+            });
+        };
+
+        if callee.arity() != args.len() {
+            return Err(ExecError {
+                span: expr.span(),
+                msg: format!(
+                    "expected {} arguments but got {}",
+                    callee.arity(),
+                    args.len()
+                ),
+            });
+        }
+
+        Ok(callee.call(self, args))
+    }
+
+    fn if_stmt(&mut self, stmt: &If) -> Result<StmtValue, ExecError> {
         let If {
             condition,
             then_branch,
@@ -245,24 +311,24 @@ impl Interpreter {
             self.execute(stmt)?;
         }
 
-        Ok(())
+        Ok(StmtValue::Finish)
     }
 
-    fn while_stmt(&mut self, stmt: &While) -> Result<(), ExecError> {
+    fn while_stmt(&mut self, stmt: &While) -> Result<StmtValue, ExecError> {
         let While { condition, body } = stmt;
 
         self.loop_depth += 1;
 
-        let res = || -> Result<(), ExecError> {
+        let res = || -> Result<StmtValue, ExecError> {
             while self.eval(condition)?.as_bool() {
                 match self.execute(body) {
-                    Ok(_) => (),
-                    Err(Exception::Break) => break,
-                    Err(Exception::Error(e)) => return Err(e),
+                    Ok(StmtValue::Finish) => (),
+                    Ok(StmtValue::Break) => break,
+                    res => return res,
                 }
             }
 
-            Ok(())
+            Ok(StmtValue::Finish)
         }();
 
         self.loop_depth -= 1;
@@ -270,7 +336,7 @@ impl Interpreter {
         res
     }
 
-    fn for_stmt(&mut self, stmt: &For) -> Result<(), ExecError> {
+    fn for_stmt(&mut self, stmt: &For) -> Result<StmtValue, ExecError> {
         let For {
             init,
             condition,
@@ -293,14 +359,14 @@ impl Interpreter {
 
         self.loop_depth += 1;
 
-        let res = || -> Result<(), ExecError> {
+        let res = || -> Result<StmtValue, ExecError> {
             match (condition, change) {
                 (Some(condition), Some(change)) => {
                     while self.eval(condition)?.as_bool() {
                         match self.execute(body) {
-                            Ok(_) => (),
-                            Err(Exception::Break) => break,
-                            Err(Exception::Error(e)) => return Err(e),
+                            Ok(StmtValue::Finish) => (),
+                            Ok(StmtValue::Break) => break,
+                            res => return res,
                         }
                         self.eval(change)?;
                     }
@@ -308,30 +374,30 @@ impl Interpreter {
                 (Some(condition), None) => {
                     while self.eval(condition)?.as_bool() {
                         match self.execute(body) {
-                            Ok(_) => (),
-                            Err(Exception::Break) => break,
-                            Err(Exception::Error(e)) => return Err(e),
+                            Ok(StmtValue::Finish) => (),
+                            Ok(StmtValue::Break) => break,
+                            res => return res,
                         }
                     }
                 }
                 (None, Some(change)) => loop {
                     match self.execute(body) {
-                        Ok(_) => (),
-                        Err(Exception::Break) => break,
-                        Err(Exception::Error(e)) => return Err(e),
+                        Ok(StmtValue::Finish) => (),
+                        Ok(StmtValue::Break) => break,
+                        res => return res,
                     }
                     self.eval(change)?;
                 },
                 (None, None) => loop {
                     match self.execute(body) {
-                        Ok(_) => (),
-                        Err(Exception::Break) => break,
-                        Err(Exception::Error(e)) => return Err(e),
+                        Ok(StmtValue::Finish) => (),
+                        Ok(StmtValue::Break) => break,
+                        res => return res,
                     }
                 },
             }
 
-            Ok(())
+            Ok(StmtValue::Finish)
         }();
 
         self.loop_depth -= 1;
@@ -342,58 +408,72 @@ impl Interpreter {
         res
     }
 
-    fn break_stmt(&mut self, stmt: &Break) -> Exception {
+    fn break_stmt(&mut self, stmt: &Break) -> Result<(), ExecError> {
         if self.loop_depth > 0 {
-            Exception::Break
+            Ok(())
         } else {
-            ExecError {
-                span: stmt.token.span.range.clone(),
+            Err(ExecError {
+                span: stmt.token.span.clone(),
                 msg: "`break` should be used inside looping".into(),
-            }
-            .into()
+            })
         }
     }
 
+    fn return_stmt(&mut self, stmt: &Return) -> Result<Value, ExecError> {
+        stmt.expr
+            .as_ref()
+            .map(|expr| self.eval(expr))
+            .unwrap_or(Ok(Value::Null))
+    }
+
     fn enter_env(&mut self) {
-        let scope = Box::new(Env::default());
-        let previous = mem::replace(&mut self.env, scope);
-        self.env.enclosing = Some(previous);
+        let env = Env::from(&self.env);
+        self.env = env.into();
     }
 
     fn leave_env(&mut self) {
-        self.env = self
+        let env = self
             .env
-            .enclosing
+            .borrow_mut()
+            .enclose
             .take()
             .expect("there must be enclosing environment");
+        self.env = env;
     }
 }
 
 #[derive(Debug)]
 pub struct ExecError {
-    pub span: Range<usize>,
+    pub span: Span,
     pub msg: String,
-}
-
-#[derive(Debug)]
-enum Exception {
-    Break,
-    Error(ExecError),
-}
-
-impl From<ExecError> for Exception {
-    fn from(e: ExecError) -> Self {
-        Self::Error(e)
-    }
 }
 
 #[derive(Debug, Default)]
 struct Env {
     values: HashMap<SmolStr, Value>,
-    enclosing: Option<Box<Self>>,
+    enclose: Option<RcCell<Self>>,
+}
+
+impl From<&RcCell<Self>> for Env {
+    fn from(enclose: &RcCell<Self>) -> Self {
+        Self {
+            values: HashMap::default(),
+            enclose: Some(enclose.clone()),
+        }
+    }
 }
 
 impl Env {
+    fn new<I>(values: I) -> Self
+    where
+        I: IntoIterator<Item = (SmolStr, Value)>,
+    {
+        Self {
+            values: HashMap::from_iter(values),
+            enclose: None,
+        }
+    }
+
     fn define(&mut self, name: &Lexeme, value: Value) {
         let Token::Identifier(s) = &name.token else {
             panic!("expected Identifier");
@@ -407,16 +487,18 @@ impl Env {
             panic!("expected Identifier");
         };
 
-        if let Some(v) = self.values.get_mut(s) {
+        self.assign_rec(s, value).ok_or_else(|| ExecError {
+            span: name.span.clone(),
+            msg: format!("undefined variable {s}"),
+        })
+    }
+
+    fn assign_rec(&mut self, name: &str, value: Value) -> Option<()> {
+        if let Some(v) = self.values.get_mut(name) {
             *v = value;
-            Ok(())
-        } else if let Some(env) = &mut self.enclosing {
-            env.assign(name, value)
+            Some(())
         } else {
-            Err(ExecError {
-                span: name.span.range.clone(),
-                msg: format!("undefined variable {s}"),
-            })
+            self.enclose.as_mut()?.borrow_mut().assign_rec(name, value)
         }
     }
 
@@ -425,15 +507,66 @@ impl Env {
             panic!("expected Identifier");
         };
 
-        if let Some(v) = self.values.get(s).cloned() {
-            Ok(v)
-        } else if let Some(env) = &self.enclosing {
-            env.get(name)
+        self.get_rec(s).ok_or_else(|| ExecError {
+            span: name.span.clone(),
+            msg: format!("undefined variable {s}"),
+        })
+    }
+
+    fn get_rec(&self, name: &str) -> Option<Value> {
+        if let Some(v) = self.values.get(name).cloned() {
+            Some(v)
         } else {
-            Err(ExecError {
-                span: name.span.range.clone(),
-                msg: format!("undefined variable {s}"),
-            })
+            self.enclose.as_ref()?.borrow().get_rec(name)
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum StmtValue {
+    Finish,
+    Break,
+    Return(Value),
+}
+
+#[derive(Debug)]
+pub struct LoxFunction {
+    declare: Function,
+    /// 函数声明时所在的上下文，调用时以此为env.enclose
+    closure: RcCell<Env>,
+}
+
+impl LoxFunction {
+    fn new(declare: &Function, closure: &RcCell<Env>) -> Self {
+        Self {
+            declare: declare.clone(),
+            closure: closure.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for LoxFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<fn {}>", self.declare.name.token)
+    }
+}
+
+impl LoxCallable for LoxFunction {
+    fn arity(&self) -> usize {
+        self.declare.params.len()
+    }
+
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
+        let env: RcCell<_> = Env::from(&self.closure).into();
+
+        for (param, arg) in self.declare.params.iter().zip(args) {
+            env.borrow_mut().define(param, arg);
+        }
+
+        let env = mem::replace(&mut intp.env, env);
+        let res = intp.fun_block(&self.declare.body);
+        intp.env = env;
+
+        res.unwrap_or(Value::Null)
     }
 }

@@ -26,9 +26,9 @@ impl Repl {
         };
 
         let report_parse_error = |e: ParseError| {
-            Report::build(ReportKind::Error, e.span.clone())
+            Report::build(ReportKind::Error, e.span.range.clone())
                 .with_label(
-                    Label::new(e.span)
+                    Label::new(e.span.range)
                         .with_message(e.msg)
                         .with_color(Color::Red),
                 )
@@ -38,9 +38,9 @@ impl Repl {
         };
 
         let report_exec_error = |e: ExecError| {
-            Report::build(ReportKind::Error, e.span.clone())
+            Report::build(ReportKind::Error, e.span.range.clone())
                 .with_label(
-                    Label::new(e.span)
+                    Label::new(e.span.range)
                         .with_message(e.msg)
                         .with_color(Color::Red),
                 )

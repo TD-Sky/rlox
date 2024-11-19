@@ -1,5 +1,8 @@
+use std::rc::Rc;
+
 use smol_str::SmolStr;
 
+use super::call::LoxCallable;
 use crate::parse::expr::Literal;
 
 #[derive(Debug, Clone)]
@@ -8,6 +11,7 @@ pub enum Value {
     Number(f64),
     String(SmolStr),
     Null,
+    Callable(Rc<dyn LoxCallable>),
 }
 
 impl PartialEq for Value {
@@ -56,6 +60,7 @@ impl std::fmt::Display for Value {
             Value::Number(x) => write!(f, "{x}"),
             Value::String(s) => f.write_str(s),
             Value::Null => f.write_str("null"),
+            Value::Callable(c) => write!(f, "{c}"),
         }
     }
 }
@@ -68,5 +73,14 @@ impl From<Literal> for Value {
             Literal::String(s) => Self::String(s),
             Literal::Null => Self::Null,
         }
+    }
+}
+
+impl<T> From<T> for Value
+where
+    T: LoxCallable + 'static,
+{
+    fn from(c: T) -> Self {
+        Self::Callable(Rc::new(c))
     }
 }

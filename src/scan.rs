@@ -4,6 +4,8 @@ use std::str::CharIndices;
 
 use smol_str::SmolStr;
 
+use crate::span::Span;
+
 #[derive(Debug)]
 pub struct Scanner<'a> {
     source: &'a str,
@@ -279,18 +281,6 @@ pub struct Lexeme {
     pub span: Span,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Span {
-    pub range: Range<usize>,
-    pub line: usize,
-}
-
-impl Span {
-    pub const fn new(range: Range<usize>, line: usize) -> Self {
-        Self { range, line }
-    }
-}
-
 #[derive(Debug)]
 pub struct ScanError {
     pub offset: usize,
@@ -391,4 +381,55 @@ pub enum Token {
     Break,
     /// End of file
     Eof,
+}
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Token::LeftParen => "(",
+            Token::RightParen => ")",
+            Token::LeftBrace => "{",
+            Token::RightBrace => "}",
+            Token::Comma => ",",
+            Token::Dot => ".",
+            Token::Minus => "-",
+            Token::Plus => "+",
+            Token::Colon => ":",
+            Token::Semicolon => ";",
+            Token::Slash => "/",
+            Token::Star => "*",
+            Token::Bang => "!",
+            Token::Question => "?",
+            Token::BangEqual => "!=",
+            Token::Equal => "=",
+            Token::EqualEqual => "==",
+            Token::Greater => ">",
+            Token::GreaterEqual => ">=",
+            Token::Less => "<",
+            Token::LessEqual => "<=",
+            Token::Identifier(s) => s.as_str(),
+            Token::String(s) => return write!(f, r#""{s}""#),
+            Token::Number(x) => return write!(f, "{x}"),
+            Token::And => "and",
+            Token::Class => "class",
+            Token::Else => "else",
+            Token::False => "false",
+            Token::Fun => "fun",
+            Token::For => "for",
+            Token::If => "if",
+            Token::Nil => "nil",
+            Token::Or => "or",
+            Token::Print => "print",
+            Token::Return => "return",
+            Token::Super => "super",
+            Token::This => "this",
+            Token::True => "true",
+            Token::Var => "var",
+            Token::While => "while",
+            Token::Break => "break",
+            Token::Eof => "<EOF>",
+        };
+
+        f.write_str(s)
+    }
 }

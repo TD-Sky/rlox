@@ -1,6 +1,6 @@
 use crate::{parse::expr::Expr, scan::Lexeme};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
@@ -10,33 +10,35 @@ pub enum Stmt {
     While(Box<While>),
     For(Box<For>),
     Break(Break),
+    Fun(Function),
+    Return(Return),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Var {
     pub name: Lexeme,
     pub init: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct If {
     pub condition: Expr,
     pub then_branch: Stmt,
     pub else_branch: Option<Stmt>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct While {
     pub condition: Expr,
     pub body: Stmt,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct For {
     pub init: Option<Stmt>,
     pub condition: Option<Expr>,
@@ -44,9 +46,22 @@ pub struct For {
     pub body: Stmt,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Break {
     pub token: Lexeme,
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub name: Lexeme,
+    pub params: Vec<Lexeme>,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone)]
+pub struct Return {
+    pub keyword: Lexeme,
+    pub expr: Option<Expr>,
 }
 
 impl From<Var> for Stmt {
@@ -82,5 +97,17 @@ impl From<For> for Stmt {
 impl From<Break> for Stmt {
     fn from(b: Break) -> Self {
         Self::Break(b)
+    }
+}
+
+impl From<Function> for Stmt {
+    fn from(f: Function) -> Self {
+        Self::Fun(f)
+    }
+}
+
+impl From<Return> for Stmt {
+    fn from(rt: Return) -> Self {
+        Self::Return(rt)
     }
 }

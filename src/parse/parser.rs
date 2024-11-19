@@ -1,8 +1,7 @@
-use std::ops::Range;
-
 use crate::{
     parse::{expr::*, stmt::*},
-    scan::{Lexeme, Span, Token},
+    scan::{Lexeme, Token},
+    span::Span,
 };
 
 #[derive(Debug)]
@@ -35,18 +34,11 @@ impl<'a> Parser<'a> {
                 }
                 Err(e) => {
                     self.cursor.current = last_ok;
-                    if self.cursor.peek().is_some_and(|lex| {
-                        matches!(
-                            lex.token,
-                            Token::Print
-                                | Token::Var
-                                | Token::LeftBrace
-                                | Token::If
-                                | Token::While
-                                | Token::For
-                                | Token::Break
-                        )
-                    }) {
+                    if self
+                        .cursor
+                        .peek()
+                        .is_some_and(|lex| is_statement_begin(&lex.token))
+                    {
                         return Err(e);
                     } else {
                         break;
@@ -102,18 +94,7 @@ impl<'a> Parser<'a> {
     ///            | ifStmt
     /// ```
     fn statement(&mut self) -> Result<Stmt, ParseError> {
-        let stmt = match self.cursor.next_if(|t| {
-            matches!(
-                t,
-                Token::Print
-                    | Token::Var
-                    | Token::LeftBrace
-                    | Token::While
-                    | Token::If
-                    | Token::For
-                    | Token::Break
-            )
-        }) {
+        let stmt = match self.cursor.next_if(is_statement_begin) {
             Some(t) if t.token == Token::Print => self.print()?,
             Some(t) if t.token == Token::Var => self.declaration()?.into(),
             Some(t) if t.token == Token::LeftBrace => self.block()?.into(),
@@ -121,6 +102,8 @@ impl<'a> Parser<'a> {
             Some(t) if t.token == Token::While => self.while_stmt()?.into(),
             Some(t) if t.token == Token::For => self.for_stmt()?.into(),
             Some(t) if t.token == Token::Break => self.break_stmt(t)?.into(),
+            Some(t) if t.token == Token::Fun => self.fun("TODO")?.into(),
+            Some(t) if t.token == Token::Return => self.return_stmt(t)?.into(),
             None => Stmt::Expr(self.expr_stmt()?),
             _ => unreachable!(),
         };
@@ -154,7 +137,7 @@ impl<'a> Parser<'a> {
             .cursor
             .next_if(|t| matches!(t, Token::Identifier(_)))
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "Expect variable name".into(),
             })?;
 
@@ -186,7 +169,7 @@ impl<'a> Parser<'a> {
         self.cursor
             .next_if(|t| matches!(t, Token::RightBrace))
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "expect `}` after block".into(),
             })?;
 
@@ -200,14 +183,14 @@ impl<'a> Parser<'a> {
         self.cursor
             .next_if_eq(Token::LeftParen)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "expect `(` after `if`".into(),
             })?;
         let condition = self.expression()?;
         self.cursor
             .next_if_eq(Token::RightParen)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "expect `)` after `if` condition".into(),
             })?;
 
@@ -232,14 +215,14 @@ impl<'a> Parser<'a> {
         self.cursor
             .next_if_eq(Token::LeftParen)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "expect `(` after `while`".into(),
             })?;
         let condition = self.expression()?;
         self.cursor
             .next_if_eq(Token::RightParen)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "expect `)` after `while` condition".into(),
             })?;
 
@@ -254,7 +237,7 @@ impl<'a> Parser<'a> {
         self.cursor
             .next_if_eq(Token::LeftParen)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "expect `(` after `for`".into(),
             })?;
 
@@ -285,7 +268,7 @@ impl<'a> Parser<'a> {
         self.cursor
             .next_if_eq(Token::RightParen)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "expect `)` after `for` clauses".into(),
             })?;
 
@@ -304,7 +287,7 @@ impl<'a> Parser<'a> {
         self.cursor
             .next_if_eq(Token::Semicolon)
             .ok_or_else(|| ParseError {
-                span: self.cursor.prev_span().range.clone(),
+                span: self.cursor.prev_span(),
                 msg: "expect `;` after statement".into(),
             })
     }
@@ -328,7 +311,7 @@ impl<'a> Parser<'a> {
                 ))
             } else {
                 Err(ParseError {
-                    span: equals.span.range.clone(),
+                    span: equals.span.clone(),
                     msg: "invalid assignment target".into(),
                 })
             };
@@ -474,10 +457,65 @@ impl<'a> Parser<'a> {
             let right = self.unary()?;
             Unary { operator, right }.into()
         } else {
-            self.primary()?
+            self.call()?
         };
 
         Ok(expr)
+    }
+
+    /// ```text
+    /// call -> primary ( "(" arguments? ")" )*
+    ///
+    /// arguments -> expression ( "," expression )*
+    /// ```
+    fn call(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.primary()?;
+
+        loop {
+            if self.cursor.next_if_eq(Token::LeftParen).is_some() {
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
+        let mut arguments = vec![];
+
+        if !self
+            .cursor
+            .peek()
+            .is_some_and(|lex| lex.token == Token::RightParen)
+        {
+            arguments.push(self.expression()?);
+            while self.cursor.next_if_eq(Token::Comma).is_some() {
+                if arguments.len() >= 255 {
+                    return Err(ParseError {
+                        span: self.cursor.next_span(),
+                        msg: "Can't have more than 255 arguments".into(),
+                    });
+                }
+                arguments.push(self.expression()?);
+            }
+        }
+
+        let paren = self
+            .cursor
+            .next_if_eq(Token::RightParen)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span(),
+                msg: "Expect ')' after arguments".into(),
+            })?;
+
+        Ok(Call {
+            callee,
+            paren,
+            arguments,
+        }
+        .into())
     }
 
     /// ```text
@@ -499,7 +537,7 @@ impl<'a> Parser<'a> {
             )
         }) else {
             return Err(ParseError {
-                span: self.cursor.next_span().range.clone(),
+                span: self.cursor.next_span(),
                 msg: "unexpected token".into(),
             });
         };
@@ -514,7 +552,7 @@ impl<'a> Parser<'a> {
                 self.cursor
                     .next_if(|t| matches!(t, Token::RightParen))
                     .ok_or_else(|| ParseError {
-                        span: self.cursor.next_span().range.clone(),
+                        span: self.cursor.next_span(),
                         msg: "Expect ')' after expression".into(),
                     })?;
                 Grouping { expression: expr }.into()
@@ -555,7 +593,7 @@ impl<'a> Parser<'a> {
             self.cursor
                 .next_if_eq(Token::Colon)
                 .ok_or_else(|| ParseError {
-                    span: self.cursor.next_span().range.clone(),
+                    span: self.cursor.next_span(),
                     msg: "expect `:` for ternary expression".into(),
                 })?;
             let or_else = self.conditional()?;
@@ -573,6 +611,85 @@ impl<'a> Parser<'a> {
     fn break_stmt(&mut self, brk: Lexeme) -> Result<Break, ParseError> {
         self.semicolon()?;
         Ok(Break { token: brk })
+    }
+
+    fn fun(&mut self, kind: &str) -> Result<Function, ParseError> {
+        let name = self
+            .cursor
+            .next_if(|tk| matches!(tk, Token::Identifier(_)))
+            .ok_or_else(|| ParseError {
+                span: self.cursor.prev_span(),
+                msg: format!("expected {kind} name"),
+            })?;
+
+        self.cursor
+            .next_if_eq(Token::LeftParen)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.prev_span(),
+                msg: format!("expected `(` after {kind} name"),
+            })?;
+
+        let mut params = vec![];
+        if self
+            .cursor
+            .peek()
+            .is_some_and(|lex| lex.token != Token::RightParen)
+        {
+            loop {
+                if params.len() >= 255 {
+                    return Err(ParseError {
+                        span: self.cursor.next_span(),
+                        msg: "cannot have more than 255 parameters".into(),
+                    });
+                }
+                params.push(
+                    self.cursor
+                        .next_if(|tk| matches!(tk, Token::Identifier(_)))
+                        .ok_or_else(|| ParseError {
+                            span: self.cursor.prev_span(),
+                            msg: "expect parameter name".into(),
+                        })?,
+                );
+                if self.cursor.next_if_eq(Token::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+
+        self.cursor
+            .next_if_eq(Token::RightParen)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.prev_span(),
+                msg: format!("expected `)` after {kind} parameters"),
+            })?;
+
+        self.cursor
+            .next_if_eq(Token::LeftBrace)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.prev_span(),
+                msg: format!("expected `{{` before {kind} body"),
+            })?;
+
+        let body = self.block()?;
+
+        Ok(Function { name, params, body })
+    }
+
+    fn return_stmt(&mut self, rt: Lexeme) -> Result<Return, ParseError> {
+        if self.cursor.next_if_eq(Token::Semicolon).is_some() {
+            return Ok(Return {
+                keyword: rt,
+                expr: None,
+            });
+        }
+
+        let expr = self.expression()?;
+        self.semicolon()?;
+
+        Ok(Return {
+            keyword: rt,
+            expr: Some(expr),
+        })
     }
 }
 
@@ -600,15 +717,16 @@ impl Cursor<'_> {
         self.next_if(|t| *t == token)
     }
 
-    fn prev_span(&self) -> &Span {
-        &self.lexemes[self.current - 1].span
+    fn prev_span(&self) -> Span {
+        self.lexemes[self.current - 1].span.clone()
     }
 
-    fn next_span(&self) -> &Span {
+    fn next_span(&self) -> Span {
         self.lexemes
             .get(self.current)
             .map(|lex| &lex.span)
             .unwrap_or(&self.eof.span)
+            .clone()
     }
 
     const fn is_at_end(&self) -> bool {
@@ -622,6 +740,23 @@ impl Cursor<'_> {
 
 #[derive(Debug)]
 pub struct ParseError {
-    pub span: Range<usize>,
+    pub span: Span,
     pub msg: String,
+}
+
+fn is_statement_begin(token: &Token) -> bool {
+    {
+        matches!(
+            token,
+            Token::Print
+                | Token::Var
+                | Token::LeftBrace
+                | Token::While
+                | Token::If
+                | Token::For
+                | Token::Break
+                | Token::Fun
+                | Token::Return
+        )
+    }
 }
