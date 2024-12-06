@@ -56,6 +56,7 @@ impl Interpreter {
             }
             Expr::Conditional(expr) => self.conditional(expr),
             Expr::Call(expr) => self.call(expr),
+            Expr::Lambda(expr) => Ok(LoxLambda::new(expr, &self.env).into()),
             _ => unreachable!(),
         }
     }
@@ -552,6 +553,47 @@ impl std::fmt::Display for LoxFunction {
 }
 
 impl LoxCallable for LoxFunction {
+    fn arity(&self) -> usize {
+        self.declare.params.len()
+    }
+
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
+        let env: RcCell<_> = Env::from(&self.closure).into();
+
+        for (param, arg) in self.declare.params.iter().zip(args) {
+            env.borrow_mut().define(param, arg);
+        }
+
+        let env = mem::replace(&mut intp.env, env);
+        let res = intp.fun_block(&self.declare.body);
+        intp.env = env;
+
+        res.unwrap_or(Value::Null)
+    }
+}
+
+#[derive(Debug)]
+pub struct LoxLambda {
+    declare: Lambda,
+    closure: RcCell<Env>,
+}
+
+impl LoxLambda {
+    fn new(declare: &Lambda, closure: &RcCell<Env>) -> Self {
+        Self {
+            declare: declare.clone(),
+            closure: closure.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for LoxLambda {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<fn>")
+    }
+}
+
+impl LoxCallable for LoxLambda {
     fn arity(&self) -> usize {
         self.declare.params.len()
     }

@@ -1,5 +1,6 @@
 use smol_str::SmolStr;
 
+use super::stmt::Block;
 use crate::scan::Lexeme;
 
 #[derive(Debug, Clone)]
@@ -17,6 +18,7 @@ pub enum Expr {
     Unary(Box<Unary>),
     Variable(Variable),
     Conditional(Box<Conditional>),
+    Lambda(Lambda),
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +103,13 @@ pub struct Variable {
     pub name: Lexeme,
 }
 
+#[derive(Debug, Clone)]
+pub struct Lambda {
+    pub fun: Lexeme,
+    pub params: Vec<Lexeme>,
+    pub body: Block,
+}
+
 impl From<Unary> for Expr {
     fn from(expr: Unary) -> Self {
         Self::Unary(Box::new(expr))
@@ -140,5 +149,11 @@ impl From<Variable> for Expr {
 impl From<Call> for Expr {
     fn from(expr: Call) -> Self {
         Self::Call(Box::new(expr))
+    }
+}
+
+impl From<Lambda> for Expr {
+    fn from(lambda: Lambda) -> Self {
+        Self::Lambda(lambda)
     }
 }

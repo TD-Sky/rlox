@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 pub use crate::parse::expr::*;
+use crate::parse::stmt::Block;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Span {
@@ -44,6 +45,7 @@ impl Spanned for Expr {
             Expr::Unary(e) => e.span(),
             Expr::Variable(e) => e.span(),
             Expr::Conditional(e) => e.span(),
+            Expr::Lambda(e) => e.span(),
         }
     }
 }
@@ -128,5 +130,17 @@ impl Spanned for Variable {
 impl Spanned for Conditional {
     fn span(&self) -> Span {
         self.cond.span().enclose(&self.or_else.span())
+    }
+}
+
+impl Spanned for Lambda {
+    fn span(&self) -> Span {
+        self.fun.span.enclose(&self.body.span())
+    }
+}
+
+impl Spanned for Block {
+    fn span(&self) -> Span {
+        self.left_brace.span.enclose(&self.right_brace.span)
     }
 }

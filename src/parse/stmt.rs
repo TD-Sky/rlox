@@ -22,7 +22,9 @@ pub struct Var {
 
 #[derive(Debug, Clone)]
 pub struct Block {
+    pub left_brace: Lexeme,
     pub stmts: Vec<Stmt>,
+    pub right_brace: Lexeme,
 }
 
 #[derive(Debug, Clone)]

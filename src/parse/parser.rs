@@ -97,7 +97,7 @@ impl<'a> Parser<'a> {
         let stmt = match self.cursor.next_if(is_statement_begin) {
             Some(t) if t.token == Token::Print => self.print()?,
             Some(t) if t.token == Token::Var => self.declaration()?.into(),
-            Some(t) if t.token == Token::LeftBrace => self.block()?.into(),
+            Some(t) if t.token == Token::LeftBrace => self.block(t)?.into(),
             Some(t) if t.token == Token::If => self.if_stmt()?.into(),
             Some(t) if t.token == Token::While => self.while_stmt()?.into(),
             Some(t) if t.token == Token::For => self.for_stmt()?.into(),
@@ -155,7 +155,7 @@ impl<'a> Parser<'a> {
     /// ```text
     /// block -> "{" statement* "}"
     /// ```
-    fn block(&mut self) -> Result<Block, ParseError> {
+    fn block(&mut self, left_brace: Lexeme) -> Result<Block, ParseError> {
         let mut stmts = vec![];
 
         while self
@@ -166,14 +166,19 @@ impl<'a> Parser<'a> {
             stmts.push(self.statement()?);
         }
 
-        self.cursor
+        let right_brace = self
+            .cursor
             .next_if(|t| matches!(t, Token::RightBrace))
             .ok_or_else(|| ParseError {
                 span: self.cursor.next_span(),
                 msg: "expect `}` after block".into(),
             })?;
 
-        Ok(Block { stmts })
+        Ok(Block {
+            left_brace,
+            stmts,
+            right_brace,
+        })
     }
 
     /// ```text
@@ -521,6 +526,7 @@ impl<'a> Parser<'a> {
     /// ```text
     /// primary -> "true" | "false" | "nil" | "this"
     ///           | NUMBER | STRING | IDENTIFIER | "(" expression ")"
+    ///           | LAMBDA
     ///           | "super" "." IDENTIFIER
     /// ```
     fn primary(&mut self) -> Result<Expr, ParseError> {
@@ -534,6 +540,7 @@ impl<'a> Parser<'a> {
                     | Token::String(_)
                     | Token::LeftParen
                     | Token::Identifier(_)
+                    | Token::Fun
             )
         }) else {
             return Err(ParseError {
@@ -556,6 +563,65 @@ impl<'a> Parser<'a> {
                         msg: "Expect ')' after expression".into(),
                     })?;
                 Grouping { expression: expr }.into()
+            }
+            Token::Fun => {
+                self.cursor
+                    .next_if(|t| matches!(t, Token::LeftParen))
+                    .ok_or_else(|| ParseError {
+                        span: self.cursor.prev_span(),
+                        msg: "Expect '(' before parameters".into(),
+                    })?;
+
+                let mut params = vec![];
+                if self
+                    .cursor
+                    .peek()
+                    .is_some_and(|lex| lex.token != Token::RightParen)
+                {
+                    loop {
+                        if params.len() >= 255 {
+                            return Err(ParseError {
+                                span: self.cursor.next_span(),
+                                msg: "cannot have more than 255 parameters".into(),
+                            });
+                        }
+                        params.push(
+                            self.cursor
+                                .next_if(|tk| matches!(tk, Token::Identifier(_)))
+                                .ok_or_else(|| ParseError {
+                                    span: self.cursor.prev_span(),
+                                    msg: "expect parameter name".into(),
+                                })?,
+                        );
+                        if self.cursor.next_if_eq(Token::Comma).is_none() {
+                            break;
+                        }
+                    }
+                }
+
+                self.cursor
+                    .next_if_eq(Token::RightParen)
+                    .ok_or_else(|| ParseError {
+                        span: self.cursor.prev_span(),
+                        msg: "expected `)` after parameters".into(),
+                    })?;
+
+                let left_brace =
+                    self.cursor
+                        .next_if_eq(Token::LeftBrace)
+                        .ok_or_else(|| ParseError {
+                            span: self.cursor.prev_span(),
+                            msg: "expected `{` before body".into(),
+                        })?;
+
+                let body = self.block(left_brace)?;
+
+                Lambda {
+                    fun: lex,
+                    params,
+                    body,
+                }
+                .into()
             }
             Token::Identifier(_) => Variable { name: lex }.into(),
             _ => unreachable!(),
@@ -663,14 +729,15 @@ impl<'a> Parser<'a> {
                 msg: format!("expected `)` after {kind} parameters"),
             })?;
 
-        self.cursor
+        let left_brace = self
+            .cursor
             .next_if_eq(Token::LeftBrace)
             .ok_or_else(|| ParseError {
                 span: self.cursor.prev_span(),
                 msg: format!("expected `{{` before {kind} body"),
             })?;
 
-        let body = self.block()?;
+        let body = self.block(left_brace)?;
 
         Ok(Function { name, params, body })
     }
