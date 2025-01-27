@@ -1,58 +1,60 @@
+use std::mem;
+
 use smol_str::SmolStr;
 
 use super::stmt::Block;
 use crate::scan::Lexeme;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
-    Assign(Box<Assign>),
-    Binary(Box<Binary>),
-    Call(Box<Call>),
-    Get(Box<Get>),
-    Grouping(Box<Grouping>),
+    Assign(Assign),
+    Binary(Binary),
+    Call(Call),
+    Get(Get),
+    Grouping(Grouping),
     Literal(Literal),
-    Logical(Box<Logical>),
-    Set(Box<Set>),
+    Logical(Logical),
+    Set(Set),
     Super(Super),
     This(This),
-    Unary(Box<Unary>),
+    Unary(Unary),
     Variable(Variable),
-    Conditional(Box<Conditional>),
+    Conditional(Conditional),
     Lambda(Lambda),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Assign {
-    pub name: Lexeme,
-    pub value: Expr,
+    pub name: Variable,
+    pub value: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Binary {
-    pub left: Expr,
+    pub left: Box<Expr>,
     pub operator: Lexeme,
-    pub right: Expr,
+    pub right: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Call {
-    pub callee: Expr,
+    pub callee: Box<Expr>,
     pub paren: Lexeme,
     pub arguments: Vec<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Get {
-    pub object: Expr,
+    pub object: Box<Expr>,
     pub name: Lexeme,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Grouping {
-    pub expression: Expr,
+    pub expression: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Bool(bool),
     Number(f64),
@@ -60,50 +62,64 @@ pub enum Literal {
     Null,
 }
 
-#[derive(Debug, Clone)]
+impl Eq for Literal {}
+
+impl std::hash::Hash for Literal {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        mem::discriminant(self).hash(state);
+        match self {
+            Self::Bool(b) => b.hash(state),
+            Self::Number(x) => x.to_bits().hash(state),
+            Self::String(s) => s.hash(state),
+            Self::Null => (),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Logical {
-    pub left: Expr,
+    pub left: Box<Expr>,
     pub operator: Lexeme,
-    pub right: Expr,
+    pub right: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Set {
-    pub object: Expr,
+    pub object: Box<Expr>,
     pub name: Lexeme,
-    pub value: Expr,
+    pub value: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Super {
     pub keyword: Lexeme,
     pub method: Lexeme,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct This {
     pub keyword: Lexeme,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Conditional {
-    pub cond: Expr,
-    pub then: Expr,
-    pub or_else: Expr,
+    pub cond: Box<Expr>,
+    pub then: Box<Expr>,
+    pub or_else: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Unary {
     pub operator: Lexeme,
-    pub right: Expr,
+    pub right: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Variable {
     pub name: Lexeme,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Lambda {
     pub fun: Lexeme,
     pub params: Vec<Lexeme>,
@@ -112,13 +128,13 @@ pub struct Lambda {
 
 impl From<Unary> for Expr {
     fn from(expr: Unary) -> Self {
-        Self::Unary(Box::new(expr))
+        Self::Unary(expr)
     }
 }
 
 impl From<Binary> for Expr {
     fn from(expr: Binary) -> Self {
-        Self::Binary(Box::new(expr))
+        Self::Binary(expr)
     }
 }
 
@@ -130,13 +146,13 @@ impl From<Literal> for Expr {
 
 impl From<Grouping> for Expr {
     fn from(expr: Grouping) -> Self {
-        Self::Grouping(Box::new(expr))
+        Self::Grouping(expr)
     }
 }
 
 impl From<Conditional> for Expr {
     fn from(expr: Conditional) -> Self {
-        Self::Conditional(Box::new(expr))
+        Self::Conditional(expr)
     }
 }
 
@@ -148,12 +164,18 @@ impl From<Variable> for Expr {
 
 impl From<Call> for Expr {
     fn from(expr: Call) -> Self {
-        Self::Call(Box::new(expr))
+        Self::Call(expr)
     }
 }
 
 impl From<Lambda> for Expr {
     fn from(lambda: Lambda) -> Self {
         Self::Lambda(lambda)
+    }
+}
+
+impl From<Assign> for Expr {
+    fn from(assign: Assign) -> Self {
+        Self::Assign(assign)
     }
 }

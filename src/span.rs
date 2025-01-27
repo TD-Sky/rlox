@@ -1,9 +1,8 @@
 use std::ops::Range;
 
-pub use crate::parse::expr::*;
-use crate::parse::stmt::Block;
+use crate::parse::types::*;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct Span {
     pub range: Range<usize>,
     pub line: usize,
@@ -52,7 +51,7 @@ impl Spanned for Expr {
 
 impl Spanned for Assign {
     fn span(&self) -> Span {
-        self.name.span.enclose(&self.value.span())
+        self.name.name.span.enclose(&self.value.span())
     }
 }
 

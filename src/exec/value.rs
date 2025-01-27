@@ -3,7 +3,7 @@ use std::rc::Rc;
 use smol_str::SmolStr;
 
 use super::call::LoxCallable;
-use crate::parse::expr::Literal;
+use crate::parse::types::Literal;
 
 #[derive(Debug, Clone)]
 pub enum Value {

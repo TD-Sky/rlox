@@ -1,16 +1,16 @@
 use crate::{
-    parse::{expr::*, stmt::*},
+    parse::types::*,
     scan::{Lexeme, Token},
     span::Span,
 };
 
 #[derive(Debug)]
-pub struct Parser<'a> {
-    cursor: Cursor<'a>,
+pub struct Parser<'s> {
+    cursor: Cursor<'s>,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(lexemes: &'a [Lexeme]) -> Self {
+impl<'s> Parser<'s> {
+    pub fn new(lexemes: &'s [Lexeme]) -> Self {
         let (eof, lexemes) = lexemes.split_last().unwrap();
 
         Self {
@@ -28,8 +28,8 @@ impl<'a> Parser<'a> {
         let mut stmts = vec![];
         while !self.cursor.is_at_end() {
             match self.statement() {
-                Ok(s) => {
-                    stmts.push(s);
+                Ok(stmt) => {
+                    stmts.push(stmt);
                     last_ok = self.cursor.current;
                 }
                 Err(e) => {
@@ -70,6 +70,7 @@ impl<'a> Parser<'a> {
     /// term
     /// factor
     /// unary
+    /// call
     /// primary
     ///
     /// 低次序的规则包裹着高次序的规则，
@@ -85,7 +86,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     /// ```text
     /// statement -> exprStmt
     ///            | varDecl
@@ -201,14 +202,14 @@ impl<'a> Parser<'a> {
 
         let then_branch = self.statement()?;
         let else_branch = if self.cursor.next_if_eq(Token::Else).is_some() {
-            Some(self.statement()?)
+            Some(Box::new(self.statement()?))
         } else {
             None
         };
 
         Ok(If {
             condition,
-            then_branch,
+            then_branch: Box::new(then_branch),
             else_branch,
         })
     }
@@ -233,7 +234,7 @@ impl<'a> Parser<'a> {
 
         Ok(While {
             condition,
-            body: self.statement()?,
+            body: Box::new(self.statement()?),
         })
     }
 
@@ -253,7 +254,8 @@ impl<'a> Parser<'a> {
             Some(t) if t.token == Token::Var => Some(self.declaration()?.into()),
             Some(t) if t.token == Token::Semicolon => None,
             _ => Some(Stmt::Expr(self.expr_stmt()?)),
-        };
+        }
+        .map(Box::new);
 
         let condition = match self.cursor.next_if_eq(Token::Semicolon) {
             Some(t) if t.token == Token::Semicolon => None,
@@ -283,7 +285,7 @@ impl<'a> Parser<'a> {
             init,
             condition,
             change,
-            body,
+            body: Box::new(body),
         })
     }
 
@@ -307,13 +309,11 @@ impl<'a> Parser<'a> {
             let value = self.assignment()?;
 
             return if let Expr::Variable(var) = expr {
-                Ok(Expr::Assign(
-                    Assign {
-                        name: var.name,
-                        value,
-                    }
-                    .into(),
-                ))
+                Ok(Assign {
+                    name: var,
+                    value: Box::new(value),
+                }
+                .into())
             } else {
                 Err(ParseError {
                     span: equals.span.clone(),
@@ -332,10 +332,11 @@ impl<'a> Parser<'a> {
         let mut expr = self.logic_and()?;
 
         while let Some(operator) = self.cursor.next_if_eq(Token::Or) {
+            let right = self.logic_and()?;
             expr = Binary {
-                left: expr,
+                left: Box::new(expr),
                 operator,
-                right: self.logic_and()?,
+                right: Box::new(right),
             }
             .into();
         }
@@ -350,10 +351,11 @@ impl<'a> Parser<'a> {
         let mut expr = self.equality()?;
 
         while let Some(operator) = self.cursor.next_if_eq(Token::And) {
+            let right = self.equality()?;
             expr = Binary {
-                left: expr,
+                left: Box::new(expr),
                 operator,
-                right: self.equality()?,
+                right: Box::new(right),
             }
             .into();
         }
@@ -373,9 +375,9 @@ impl<'a> Parser<'a> {
         {
             let right = self.comparison()?;
             expr = Binary {
-                left: expr,
+                left: Box::new(expr),
                 operator,
-                right,
+                right: Box::new(right),
             }
             .into();
         }
@@ -397,9 +399,9 @@ impl<'a> Parser<'a> {
         }) {
             let right = self.term()?;
             expr = Binary {
-                left: expr,
+                left: Box::new(expr),
                 operator,
-                right,
+                right: Box::new(right),
             }
             .into();
         }
@@ -419,9 +421,9 @@ impl<'a> Parser<'a> {
         {
             let right = self.factor()?;
             expr = Binary {
-                left: expr,
+                left: Box::new(expr),
                 operator,
-                right,
+                right: Box::new(right),
             }
             .into();
         }
@@ -441,9 +443,9 @@ impl<'a> Parser<'a> {
         {
             let right = self.unary()?;
             expr = Binary {
-                left: expr,
+                left: Box::new(expr),
                 operator,
-                right,
+                right: Box::new(right),
             }
             .into();
         }
@@ -460,7 +462,11 @@ impl<'a> Parser<'a> {
             .next_if(|t| matches!(t, Token::Bang | Token::Minus))
         {
             let right = self.unary()?;
-            Unary { operator, right }.into()
+            Unary {
+                operator,
+                right: Box::new(right),
+            }
+            .into()
         } else {
             self.call()?
         };
@@ -516,7 +522,7 @@ impl<'a> Parser<'a> {
             })?;
 
         Ok(Call {
-            callee,
+            callee: Box::new(callee),
             paren,
             arguments,
         }
@@ -562,7 +568,10 @@ impl<'a> Parser<'a> {
                         span: self.cursor.next_span(),
                         msg: "Expect ')' after expression".into(),
                     })?;
-                Grouping { expression: expr }.into()
+                Grouping {
+                    expression: Box::new(expr),
+                }
+                .into()
             }
             Token::Fun => {
                 self.cursor
@@ -637,10 +646,11 @@ impl<'a> Parser<'a> {
         let mut expr = self.assignment()?;
 
         while let Some(comma) = self.cursor.next_if(|t| matches!(t, Token::Comma)) {
+            let right = self.expression()?;
             expr = Binary {
-                left: expr,
+                left: Box::new(expr),
                 operator: comma,
-                right: self.expression()?,
+                right: Box::new(right),
             }
             .into();
         }
@@ -664,11 +674,11 @@ impl<'a> Parser<'a> {
                 })?;
             let or_else = self.conditional()?;
             expr = Conditional {
-                cond: expr,
-                then,
-                or_else,
+                cond: Box::new(expr),
+                then: Box::new(then),
+                or_else: Box::new(or_else),
             }
-            .into()
+            .into();
         }
 
         Ok(expr)

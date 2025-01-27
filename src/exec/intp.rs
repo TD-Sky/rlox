@@ -3,10 +3,13 @@ use std::mem;
 
 use smol_str::{SmolStr, SmolStrBuilder};
 
-use super::call::{clock, LoxCallable};
+use super::{
+    call::{clock, LoxCallable},
+    env::Env,
+};
 use crate::{
     exec::Value,
-    parse::{expr::*, stmt::*},
+    parse::types::*,
     scan::{Lexeme, Token},
     span::{Span, Spanned},
     utils::RcCell,
@@ -22,18 +25,24 @@ thread_local! {
 pub struct Interpreter {
     env: RcCell<Env>,
     loop_depth: usize,
+    locals: HashMap<Expr, usize>,
 }
 
 impl Default for Interpreter {
     fn default() -> Self {
-        Self {
-            env: GLOBAL_ENV.with(Clone::clone),
-            loop_depth: 0,
-        }
+        Self::new()
     }
 }
 
 impl Interpreter {
+    pub fn new() -> Self {
+        Self {
+            env: GLOBAL_ENV.with(Clone::clone),
+            loop_depth: 0,
+            locals: Default::default(),
+        }
+    }
+
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<(), ExecError> {
         for stmt in stmts {
             self.execute(stmt)?;
@@ -48,17 +57,17 @@ impl Interpreter {
             Expr::Grouping(expr) => self.grouping(expr),
             Expr::Literal(expr) => Ok(self.literal(expr)),
             Expr::Unary(expr) => self.unary(expr),
-            Expr::Variable(var) => self.env.borrow().get(&var.name),
-            Expr::Assign(expr) => {
-                let value = self.eval(&expr.value)?;
-                self.env.borrow_mut().assign(&expr.name, value.clone())?;
-                Ok(value)
-            }
+            Expr::Variable(var) => self.lookup_var(&var.name, expr),
+            Expr::Assign(assign) => self.assign(assign, expr),
             Expr::Conditional(expr) => self.conditional(expr),
             Expr::Call(expr) => self.call(expr),
             Expr::Lambda(expr) => Ok(LoxLambda::new(expr, &self.env).into()),
             _ => unreachable!(),
         }
+    }
+
+    pub fn resolve(&mut self, expr: &Expr, depth: usize) {
+        self.locals.insert(expr.clone(), depth);
     }
 }
 
@@ -71,7 +80,7 @@ impl Interpreter {
                 println!("{value}");
                 StmtValue::Finish
             }
-            Stmt::Var(var) => return self.declare(var).map(|_| StmtValue::Finish),
+            Stmt::Var(var) => return self.declare_var(var).map(|_| StmtValue::Finish),
             Stmt::Block(block) => self.block(block)?,
             Stmt::If(stmt) => self.if_stmt(stmt)?,
             Stmt::While(stmt) => self.while_stmt(stmt)?,
@@ -85,7 +94,7 @@ impl Interpreter {
         })
     }
 
-    fn declare(&mut self, var: &Var) -> Result<(), ExecError> {
+    fn declare_var(&mut self, var: &Var) -> Result<(), ExecError> {
         let value = match &var.init {
             Some(expr) => self.eval(expr)?,
             None => Value::Null,
@@ -299,6 +308,21 @@ impl Interpreter {
         Ok(callee.call(self, args))
     }
 
+    fn assign(&mut self, expr: &Assign, shell: &Expr) -> Result<Value, ExecError> {
+        let value = self.eval(&expr.value)?;
+
+        {
+            let value = value.clone();
+            if let Some(&depth) = self.locals.get(shell) {
+                Env::assign_at(self.env.clone(), depth, &expr.name.name, value);
+            } else {
+                GLOBAL_ENV.with(|env| env.borrow_mut().assign(&expr.name.name, value))?;
+            }
+        }
+
+        Ok(value)
+    }
+
     fn if_stmt(&mut self, stmt: &If) -> Result<StmtValue, ExecError> {
         let If {
             condition,
@@ -346,10 +370,10 @@ impl Interpreter {
         } = stmt;
 
         let mut new_env = false;
-        match init {
+        match init.as_deref() {
             Some(Stmt::Var(var)) => {
                 self.enter_env();
-                self.declare(var).inspect_err(|_| self.leave_env())?;
+                self.declare_var(var).inspect_err(|_| self.leave_env())?;
                 new_env = true;
             }
             Some(Stmt::Expr(expr)) => {
@@ -441,86 +465,20 @@ impl Interpreter {
             .expect("there must be enclosing environment");
         self.env = env;
     }
+
+    fn lookup_var(&self, name: &Lexeme, expr: &Expr) -> Result<Value, ExecError> {
+        if let Some(&depth) = self.locals.get(expr) {
+            Ok(Env::get_at(self.env.clone(), depth, name))
+        } else {
+            GLOBAL_ENV.with(|env| env.borrow().get(name))
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct ExecError {
     pub span: Span,
     pub msg: String,
-}
-
-#[derive(Debug, Default)]
-struct Env {
-    values: HashMap<SmolStr, Value>,
-    enclose: Option<RcCell<Self>>,
-}
-
-impl From<&RcCell<Self>> for Env {
-    fn from(enclose: &RcCell<Self>) -> Self {
-        Self {
-            values: HashMap::default(),
-            enclose: Some(enclose.clone()),
-        }
-    }
-}
-
-impl Env {
-    fn new<I>(values: I) -> Self
-    where
-        I: IntoIterator<Item = (SmolStr, Value)>,
-    {
-        Self {
-            values: HashMap::from_iter(values),
-            enclose: None,
-        }
-    }
-
-    fn define(&mut self, name: &Lexeme, value: Value) {
-        let Token::Identifier(s) = &name.token else {
-            panic!("expected Identifier");
-        };
-
-        self.values.insert(s.clone(), value);
-    }
-
-    fn assign(&mut self, name: &Lexeme, value: Value) -> Result<(), ExecError> {
-        let Token::Identifier(s) = &name.token else {
-            panic!("expected Identifier");
-        };
-
-        self.assign_rec(s, value).ok_or_else(|| ExecError {
-            span: name.span.clone(),
-            msg: format!("undefined variable {s}"),
-        })
-    }
-
-    fn assign_rec(&mut self, name: &str, value: Value) -> Option<()> {
-        if let Some(v) = self.values.get_mut(name) {
-            *v = value;
-            Some(())
-        } else {
-            self.enclose.as_mut()?.borrow_mut().assign_rec(name, value)
-        }
-    }
-
-    fn get(&self, name: &Lexeme) -> Result<Value, ExecError> {
-        let Token::Identifier(s) = &name.token else {
-            panic!("expected Identifier");
-        };
-
-        self.get_rec(s).ok_or_else(|| ExecError {
-            span: name.span.clone(),
-            msg: format!("undefined variable {s}"),
-        })
-    }
-
-    fn get_rec(&self, name: &str) -> Option<Value> {
-        if let Some(v) = self.values.get(name).cloned() {
-            Some(v)
-        } else {
-            self.enclose.as_ref()?.borrow().get_rec(name)
-        }
-    }
 }
 
 #[derive(Debug)]
