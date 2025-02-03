@@ -103,8 +103,9 @@ impl Parser<'_> {
             Some(t) if t.token == Token::While => self.while_stmt()?.into(),
             Some(t) if t.token == Token::For => self.for_stmt()?.into(),
             Some(t) if t.token == Token::Break => self.break_stmt(t)?.into(),
-            Some(t) if t.token == Token::Fun => self.fun("TODO")?.into(),
+            Some(t) if t.token == Token::Fun => self.function("function")?.into(),
             Some(t) if t.token == Token::Return => self.return_stmt(t)?.into(),
+            Some(t) if t.token == Token::Class => self.class(t)?.into(),
             None => Stmt::Expr(self.expr_stmt()?),
             _ => unreachable!(),
         };
@@ -287,6 +288,37 @@ impl Parser<'_> {
             change,
             body: Box::new(body),
         })
+    }
+
+    fn class(&mut self, _class: Lexeme) -> Result<Class, ParseError> {
+        let name = self
+            .cursor
+            .next_if(|t| matches!(t, Token::Identifier(_)))
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span(),
+                msg: "expect class name".into(),
+            })?;
+
+        self.cursor
+            .next_if_eq(Token::LeftBrace)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span(),
+                msg: "expect `{` before class body".into(),
+            })?;
+
+        let mut methods = vec![];
+        while !self.cursor.is_at_end() && self.cursor.next_if_eq(Token::RightBrace).is_none() {
+            methods.push(self.function("method")?);
+        }
+
+        self.cursor
+            .next_if_eq(Token::RightBrace)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span(),
+                msg: "expect `}` after class body".into(),
+            })?;
+
+        Ok(Class { name, methods })
     }
 
     /// 辅助方法，用于解析`;`
@@ -689,7 +721,7 @@ impl Parser<'_> {
         Ok(Break { token: brk })
     }
 
-    fn fun(&mut self, kind: &str) -> Result<Function, ParseError> {
+    fn function(&mut self, kind: &str) -> Result<Function, ParseError> {
         let name = self
             .cursor
             .next_if(|tk| matches!(tk, Token::Identifier(_)))

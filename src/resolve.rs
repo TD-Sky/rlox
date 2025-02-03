@@ -70,6 +70,10 @@ impl Resolver<'_> {
             Stmt::Fun(function) => self.func_stmt(function),
             Stmt::Return(rt) => self.return_stmt(rt),
             Stmt::For(stmt) => self.for_stmt(stmt),
+            Stmt::Class(class) => {
+                self.class(class);
+                Ok(())
+            }
             Stmt::Break(_) => Ok(()),
         }
     }
@@ -247,6 +251,12 @@ impl Resolver<'_> {
         }
 
         res
+    }
+
+    fn class(&mut self, class: &Class) {
+        let name = class.name.ident();
+        self.declare(name);
+        self.define(name);
     }
 
     fn binary(&mut self, expr: &Binary) -> Result<(), ResolveError> {

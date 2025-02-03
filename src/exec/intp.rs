@@ -73,25 +73,26 @@ impl Interpreter {
 
 impl Interpreter {
     fn execute(&mut self, stmt: &Stmt) -> Result<StmtValue, ExecError> {
-        Ok(match stmt {
-            Stmt::Expr(expr) => return self.eval(expr).map(|_| StmtValue::Finish),
+        match stmt {
+            Stmt::Expr(expr) => self.eval(expr).map(|_| StmtValue::Finish),
             Stmt::Print(expr) => {
                 let value = self.eval(expr)?;
                 println!("{value}");
-                StmtValue::Finish
+                Ok(StmtValue::Finish)
             }
-            Stmt::Var(var) => return self.declare_var(var).map(|_| StmtValue::Finish),
-            Stmt::Block(block) => self.block(block)?,
-            Stmt::If(stmt) => self.if_stmt(stmt)?,
-            Stmt::While(stmt) => self.while_stmt(stmt)?,
-            Stmt::For(stmt) => self.for_stmt(stmt)?,
-            Stmt::Break(stmt) => return self.break_stmt(stmt).map(|_| StmtValue::Break),
+            Stmt::Var(var) => self.declare_var(var).map(|_| StmtValue::Finish),
+            Stmt::Block(block) => self.block(block),
+            Stmt::If(stmt) => self.if_stmt(stmt),
+            Stmt::While(stmt) => self.while_stmt(stmt),
+            Stmt::For(stmt) => self.for_stmt(stmt),
+            Stmt::Break(stmt) => self.break_stmt(stmt).map(|_| StmtValue::Break),
             Stmt::Fun(fun) => {
                 self.declare_fun(fun);
-                StmtValue::Finish
+                Ok(StmtValue::Finish)
             }
-            Stmt::Return(rt) => StmtValue::Return(self.return_stmt(rt)?),
-        })
+            Stmt::Return(rt) => self.return_stmt(rt).map(StmtValue::Return),
+            Stmt::Class(class) => self.class(class).map(|_| StmtValue::Finish),
+        }
     }
 
     fn declare_var(&mut self, var: &Var) -> Result<(), ExecError> {
@@ -451,6 +452,14 @@ impl Interpreter {
             .unwrap_or(Ok(Value::Null))
     }
 
+    fn class(&mut self, class: &Class) -> Result<(), ExecError> {
+        let name = &class.name;
+        self.env.borrow_mut().define(name, Value::Null);
+        let class = LoxClass::new(name.ident());
+        self.env.borrow_mut().assign(name, class.into())?;
+        Ok(())
+    }
+
     fn enter_env(&mut self) {
         let env = Env::from(&self.env);
         self.env = env.into();
@@ -568,5 +577,22 @@ impl LoxCallable for LoxLambda {
         intp.env = env;
 
         res.unwrap_or(Value::Null)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoxClass {
+    name: SmolStr,
+}
+
+impl LoxClass {
+    pub fn new(name: &str) -> Self {
+        Self { name: name.into() }
+    }
+}
+
+impl std::fmt::Display for LoxClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
     }
 }
