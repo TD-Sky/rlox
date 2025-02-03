@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
 use smol_str::SmolStr;
 
@@ -17,6 +17,8 @@ pub struct Resolver<'i> {
     /// 所有作用域叠成的栈，会动态变化；
     /// 映射：变量名到是否初始化
     scopes: Vec<HashMap<SmolStr, bool>>,
+    in_class: bool,
+    current_ft: Option<FunctionType>,
     interpreter: &'i mut Interpreter,
 }
 
@@ -24,6 +26,8 @@ impl<'i> Resolver<'i> {
     pub fn new(interpreter: &'i mut Interpreter) -> Self {
         Self {
             interpreter,
+            in_class: false,
+            current_ft: None,
             scopes: vec![],
         }
     }
@@ -43,12 +47,14 @@ impl<'i> Resolver<'i> {
             Expr::Call(call) => self.call(call),
             Expr::Grouping(grouping) => self.resolve_expr(&grouping.expression),
             Expr::Literal(_) => Ok(()),
-            Expr::Logical(logical) => self.logical(logical),
             Expr::Unary(unary) => self.unary(unary),
             Expr::Variable(variable) => self.variable(variable, expr),
             Expr::Conditional(conditional) => self.conditional(conditional),
             Expr::Lambda(lambda) => self.lambda(lambda),
-            Expr::Get(_) | Expr::Set(_) | Expr::Super(_) | Expr::This(_) => {
+            Expr::Get(get) => self.resolve_expr(&get.object),
+            Expr::Set(set) => self.set(set),
+            Expr::This(this) => self.this(this, expr),
+            Expr::Super(_) => {
                 unimplemented!()
             }
         }
@@ -70,11 +76,14 @@ impl Resolver<'_> {
             Stmt::Fun(function) => self.func_stmt(function),
             Stmt::Return(rt) => self.return_stmt(rt),
             Stmt::For(stmt) => self.for_stmt(stmt),
+            Stmt::Class(class) => self.class(class),
             Stmt::Break(_) => Ok(()),
         }
     }
 
-    fn resolve_func(&mut self, func: &Function) -> Result<(), ResolveError> {
+    fn resolve_func(&mut self, func: &Function, ft: FunctionType) -> Result<(), ResolveError> {
+        let enclose_ft = mem::replace(&mut self.current_ft, Some(ft));
+
         self.begin_scope();
         for param in &func.params {
             let name = param.ident();
@@ -83,6 +92,8 @@ impl Resolver<'_> {
         }
         let res = self.block(&func.body);
         self.end_scope();
+
+        self.current_ft = enclose_ft;
 
         res
     }
@@ -182,7 +193,7 @@ impl Resolver<'_> {
         self.declare(name);
         self.define(name);
 
-        self.resolve_func(func)
+        self.resolve_func(func, FunctionType::Function)
     }
 
     fn if_stmt(&mut self, stmt: &If) -> Result<(), ResolveError> {
@@ -196,9 +207,26 @@ impl Resolver<'_> {
     }
 
     fn return_stmt(&mut self, stmt: &Return) -> Result<(), ResolveError> {
+        match &self.current_ft {
+            Some(FunctionType::Init) => {
+                return Err(ResolveError {
+                    span: stmt.span(),
+                    msg: "can't return a value from an initializer".into(),
+                });
+            }
+            None => {
+                return Err(ResolveError {
+                    span: stmt.span(),
+                    msg: "can't return from top-level code".into(),
+                });
+            }
+            _ => (),
+        }
+
         if let Some(value) = &stmt.expr {
             self.resolve_expr(value)?;
         }
+
         Ok(())
     }
 
@@ -249,13 +277,33 @@ impl Resolver<'_> {
         res
     }
 
-    fn binary(&mut self, expr: &Binary) -> Result<(), ResolveError> {
-        self.resolve_expr(&expr.left)?;
-        self.resolve_expr(&expr.right)?;
+    fn class(&mut self, class: &Class) -> Result<(), ResolveError> {
+        let enclose_in_class = mem::replace(&mut self.in_class, true);
+
+        let name = class.name.ident();
+        self.declare(name);
+        self.define(name);
+
+        self.begin_scope();
+        self.scopes.last_mut().unwrap().insert("this".into(), true);
+
+        for method in &class.methods {
+            let ft = if method.name.ident() == "init" {
+                FunctionType::Init
+            } else {
+                FunctionType::Method
+            };
+
+            self.resolve_func(method, ft)?;
+        }
+
+        self.end_scope();
+        self.in_class = enclose_in_class;
+
         Ok(())
     }
 
-    fn logical(&mut self, expr: &Logical) -> Result<(), ResolveError> {
+    fn binary(&mut self, expr: &Binary) -> Result<(), ResolveError> {
         self.resolve_expr(&expr.left)?;
         self.resolve_expr(&expr.right)?;
         Ok(())
@@ -286,10 +334,34 @@ impl Resolver<'_> {
         self.end_scope();
         res
     }
+
+    fn set(&mut self, set: &Set) -> Result<(), ResolveError> {
+        self.resolve_expr(&set.object)?;
+        self.resolve_expr(&set.value)?;
+        Ok(())
+    }
+
+    fn this(&mut self, this: &This, shell: &Expr) -> Result<(), ResolveError> {
+        if self.in_class {
+            self.resolve_local(shell, this.keyword.ident())
+        } else {
+            Err(ResolveError {
+                span: this.span(),
+                msg: "can't use `this` outside of a class".into(),
+            })
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct ResolveError {
     pub span: Span,
     pub msg: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FunctionType {
+    Function,
+    Init,
+    Method,
 }

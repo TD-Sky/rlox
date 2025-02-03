@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::mem;
+use std::{collections::HashMap, rc::Rc};
 
 use smol_str::{SmolStr, SmolStrBuilder};
 
@@ -62,7 +62,10 @@ impl Interpreter {
             Expr::Conditional(expr) => self.conditional(expr),
             Expr::Call(expr) => self.call(expr),
             Expr::Lambda(expr) => Ok(LoxLambda::new(expr, &self.env).into()),
-            _ => unreachable!(),
+            Expr::Get(get) => self.get(get),
+            Expr::Set(set) => self.set(set),
+            Expr::This(this) => self.lookup_var(&this.keyword, expr),
+            Expr::Super(_) => todo!(),
         }
     }
 
@@ -73,25 +76,26 @@ impl Interpreter {
 
 impl Interpreter {
     fn execute(&mut self, stmt: &Stmt) -> Result<StmtValue, ExecError> {
-        Ok(match stmt {
-            Stmt::Expr(expr) => return self.eval(expr).map(|_| StmtValue::Finish),
+        match stmt {
+            Stmt::Expr(expr) => self.eval(expr).map(|_| StmtValue::Finish),
             Stmt::Print(expr) => {
                 let value = self.eval(expr)?;
                 println!("{value}");
-                StmtValue::Finish
+                Ok(StmtValue::Finish)
             }
-            Stmt::Var(var) => return self.declare_var(var).map(|_| StmtValue::Finish),
-            Stmt::Block(block) => self.block(block)?,
-            Stmt::If(stmt) => self.if_stmt(stmt)?,
-            Stmt::While(stmt) => self.while_stmt(stmt)?,
-            Stmt::For(stmt) => self.for_stmt(stmt)?,
-            Stmt::Break(stmt) => return self.break_stmt(stmt).map(|_| StmtValue::Break),
+            Stmt::Var(var) => self.declare_var(var).map(|_| StmtValue::Finish),
+            Stmt::Block(block) => self.block(block),
+            Stmt::If(stmt) => self.if_stmt(stmt),
+            Stmt::While(stmt) => self.while_stmt(stmt),
+            Stmt::For(stmt) => self.for_stmt(stmt),
+            Stmt::Break(stmt) => self.break_stmt(stmt).map(|_| StmtValue::Break),
             Stmt::Fun(fun) => {
                 self.declare_fun(fun);
-                StmtValue::Finish
+                Ok(StmtValue::Finish)
             }
-            Stmt::Return(rt) => StmtValue::Return(self.return_stmt(rt)?),
-        })
+            Stmt::Return(rt) => self.return_stmt(rt).map(StmtValue::Return),
+            Stmt::Class(class) => self.class(class).map(|_| StmtValue::Finish),
+        }
     }
 
     fn declare_var(&mut self, var: &Var) -> Result<(), ExecError> {
@@ -105,12 +109,12 @@ impl Interpreter {
     }
 
     fn declare_fun(&mut self, fun: &Function) {
-        let lox_fun = LoxFunction::new(fun, &self.env);
+        let lox_fun = LoxFunction::new(fun, &self.env, false);
         self.env.borrow_mut().define(&fun.name, lox_fun.into());
     }
 
     fn block(&mut self, block: &Block) -> Result<StmtValue, ExecError> {
-        self.enter_env();
+        self.begin_scope();
 
         let res = || -> Result<StmtValue, ExecError> {
             for stmt in &block.stmts {
@@ -124,7 +128,7 @@ impl Interpreter {
             Ok(StmtValue::Finish)
         }();
 
-        self.leave_env();
+        self.end_scope();
 
         res
     }
@@ -323,6 +327,31 @@ impl Interpreter {
         Ok(value)
     }
 
+    fn get(&mut self, get: &Get) -> Result<Value, ExecError> {
+        if let Value::Instance(instance) = self.eval(&get.object)? {
+            instance.get(&get.name)
+        } else {
+            Err(ExecError {
+                span: get.span(),
+                msg: "only instances have properties".into(),
+            })
+        }
+    }
+
+    fn set(&mut self, set: &Set) -> Result<Value, ExecError> {
+        let Value::Instance(mut instance) = self.eval(&set.object)? else {
+            return Err(ExecError {
+                span: set.span(),
+                msg: "only instances have fields".into(),
+            });
+        };
+
+        let value = self.eval(&set.value)?;
+        instance.set(&set.name, value.clone());
+
+        Ok(value)
+    }
+
     fn if_stmt(&mut self, stmt: &If) -> Result<StmtValue, ExecError> {
         let If {
             condition,
@@ -372,8 +401,8 @@ impl Interpreter {
         let mut new_env = false;
         match init.as_deref() {
             Some(Stmt::Var(var)) => {
-                self.enter_env();
-                self.declare_var(var).inspect_err(|_| self.leave_env())?;
+                self.begin_scope();
+                self.declare_var(var).inspect_err(|_| self.end_scope())?;
                 new_env = true;
             }
             Some(Stmt::Expr(expr)) => {
@@ -427,7 +456,7 @@ impl Interpreter {
 
         self.loop_depth -= 1;
         if new_env {
-            self.leave_env();
+            self.end_scope();
         }
 
         res
@@ -451,12 +480,29 @@ impl Interpreter {
             .unwrap_or(Ok(Value::Null))
     }
 
-    fn enter_env(&mut self) {
+    fn class(&mut self, class: &Class) -> Result<(), ExecError> {
+        let name = &class.name;
+        // 先占位，以便类方法可以访问到类本身
+        self.env.borrow_mut().define(name, Value::Null);
+
+        let methods = class.methods.iter().map(|method| {
+            let mname = method.name.ident();
+
+            (mname, LoxFunction::new(method, &self.env, mname == "init"))
+        });
+        let class = LoxClass::new(name.ident(), methods);
+
+        self.env.borrow_mut().define(name, class.into());
+
+        Ok(())
+    }
+
+    fn begin_scope(&mut self) {
         let env = Env::from(&self.env);
         self.env = env.into();
     }
 
-    fn leave_env(&mut self) {
+    fn end_scope(&mut self) {
         let env = self
             .env
             .borrow_mut()
@@ -468,7 +514,7 @@ impl Interpreter {
 
     fn lookup_var(&self, name: &Lexeme, expr: &Expr) -> Result<Value, ExecError> {
         if let Some(&depth) = self.locals.get(expr) {
-            Ok(Env::get_at(self.env.clone(), depth, name))
+            Ok(Env::get_at(self.env.clone(), depth, name.ident()))
         } else {
             GLOBAL_ENV.with(|env| env.borrow().get(name))
         }
@@ -493,13 +539,26 @@ pub struct LoxFunction {
     declare: Function,
     /// 函数声明时所在的上下文，调用时以此为env.enclose
     closure: RcCell<Env>,
+    is_init: bool,
 }
 
 impl LoxFunction {
-    fn new(declare: &Function, closure: &RcCell<Env>) -> Self {
+    fn new(declare: &Function, closure: &RcCell<Env>, is_init: bool) -> Self {
         Self {
             declare: declare.clone(),
             closure: closure.clone(),
+            is_init,
+        }
+    }
+
+    /// 创建一个存在`this`实例的新环境的`LoxFunction`
+    fn bind(&self, this: &LoxInstance) -> Self {
+        let mut env = Env::from(&self.closure);
+        env.insert("this", this.clone().into());
+        Self {
+            declare: self.declare.clone(),
+            closure: RcCell::new(env),
+            is_init: self.is_init,
         }
     }
 }
@@ -526,7 +585,12 @@ impl LoxCallable for LoxFunction {
         let res = intp.fun_block(&self.declare.body);
         intp.env = env;
 
-        res.unwrap_or(Value::Null)
+        if self.is_init {
+            // 调用初始化方法，就把实例返回去
+            Env::get_at(self.closure.clone(), 0, "this")
+        } else {
+            res.unwrap_or(Value::Null)
+        }
     }
 }
 
@@ -568,5 +632,80 @@ impl LoxCallable for LoxLambda {
         intp.env = env;
 
         res.unwrap_or(Value::Null)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoxClass {
+    name: SmolStr,
+    methods: HashMap<SmolStr, Rc<LoxFunction>>,
+}
+
+impl LoxClass {
+    pub fn new<'a>(name: &str, methods: impl Iterator<Item = (&'a str, LoxFunction)>) -> Self {
+        Self {
+            name: name.into(),
+            methods: methods.map(|(s, f)| (s.into(), Rc::new(f))).collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for LoxClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+impl LoxCallable for LoxClass {
+    fn arity(&self) -> usize {
+        self.methods
+            .get("init")
+            .map(|f| f.arity())
+            .unwrap_or_default()
+    }
+
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
+        let instance = LoxInstance {
+            class: self.clone(),
+            fields: Default::default(),
+        };
+
+        if let Some(init) = self.methods.get("init") {
+            init.bind(&instance).call(intp, args);
+        }
+
+        instance.into()
+    }
+}
+
+/// 实例就是具备状态的类
+#[derive(Debug, Clone)]
+pub struct LoxInstance {
+    class: LoxClass,
+    fields: HashMap<SmolStr, Value>,
+}
+
+impl LoxInstance {
+    pub fn get(&self, field: &Lexeme) -> Result<Value, ExecError> {
+        let name = field.ident();
+
+        self.fields
+            .get(name)
+            .cloned()
+            .or_else(|| self.class.methods.get(name).map(|v| v.bind(self).into()))
+            .ok_or_else(|| ExecError {
+                span: field.span.clone(),
+                msg: format!("undefined property `{name}`"),
+            })
+    }
+
+    pub fn set(&mut self, field: &Lexeme, value: Value) {
+        self.fields.insert(field.ident().into(), value);
+    }
+}
+
+impl std::fmt::Display for LoxInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} instance", self.class)
     }
 }

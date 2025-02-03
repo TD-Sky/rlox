@@ -12,6 +12,7 @@ pub enum Stmt {
     Break(Break),
     Fun(Function),
     Return(Return),
+    Class(Class),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -66,6 +67,12 @@ pub struct Return {
     pub expr: Option<Expr>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Class {
+    pub name: Lexeme,
+    pub methods: Vec<Function>,
+}
+
 impl From<Var> for Stmt {
     fn from(var: Var) -> Self {
         Stmt::Var(var)
@@ -111,5 +118,11 @@ impl From<Function> for Stmt {
 impl From<Return> for Stmt {
     fn from(rt: Return) -> Self {
         Self::Return(rt)
+    }
+}
+
+impl From<Class> for Stmt {
+    fn from(class: Class) -> Self {
+        Self::Class(class)
     }
 }

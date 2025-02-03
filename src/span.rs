@@ -37,7 +37,6 @@ impl Spanned for Expr {
             Expr::Get(e) => e.span(),
             Expr::Grouping(e) => e.span(),
             Expr::Literal(e) => e.span(),
-            Expr::Logical(e) => e.span(),
             Expr::Set(e) => e.span(),
             Expr::Super(e) => e.span(),
             Expr::This(e) => e.span(),
@@ -90,12 +89,6 @@ impl Spanned for Literal {
     }
 }
 
-impl Spanned for Logical {
-    fn span(&self) -> Span {
-        self.left.span().enclose(&self.right.span())
-    }
-}
-
 impl Spanned for Set {
     fn span(&self) -> Span {
         self.object.span().enclose(&self.value.span())
@@ -141,5 +134,15 @@ impl Spanned for Lambda {
 impl Spanned for Block {
     fn span(&self) -> Span {
         self.left_brace.span.enclose(&self.right_brace.span)
+    }
+}
+
+impl Spanned for Return {
+    fn span(&self) -> Span {
+        if let Some(expr) = &self.expr {
+            self.keyword.span.enclose(&expr.span())
+        } else {
+            self.keyword.span.clone()
+        }
     }
 }

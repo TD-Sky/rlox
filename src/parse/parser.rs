@@ -93,6 +93,10 @@ impl Parser<'_> {
     ///            | printStmt
     ///            | block
     ///            | ifStmt
+    ///            | funDecl
+    ///            | class
+    ///
+    /// funDecl -> "fun" function
     /// ```
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         let stmt = match self.cursor.next_if(is_statement_begin) {
@@ -103,8 +107,9 @@ impl Parser<'_> {
             Some(t) if t.token == Token::While => self.while_stmt()?.into(),
             Some(t) if t.token == Token::For => self.for_stmt()?.into(),
             Some(t) if t.token == Token::Break => self.break_stmt(t)?.into(),
-            Some(t) if t.token == Token::Fun => self.fun("TODO")?.into(),
+            Some(t) if t.token == Token::Fun => self.function("function")?.into(),
             Some(t) if t.token == Token::Return => self.return_stmt(t)?.into(),
+            Some(t) if t.token == Token::Class => self.class(t)?.into(),
             None => Stmt::Expr(self.expr_stmt()?),
             _ => unreachable!(),
         };
@@ -289,6 +294,40 @@ impl Parser<'_> {
         })
     }
 
+    /// ```text
+    /// class -> "class" IDENTIFIER "{" function* "}"
+    /// ```
+    fn class(&mut self, _class: Lexeme) -> Result<Class, ParseError> {
+        let name = self
+            .cursor
+            .next_if(|t| matches!(t, Token::Identifier(_)))
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span(),
+                msg: "expect class name".into(),
+            })?;
+
+        self.cursor
+            .next_if_eq(Token::LeftBrace)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span(),
+                msg: "expect `{` before class body".into(),
+            })?;
+
+        let mut methods = vec![];
+        while !self.cursor.is_at_end() && self.cursor.next_if_eq(Token::RightBrace).is_none() {
+            methods.push(self.function("method")?);
+        }
+
+        self.cursor
+            .next_if_eq(Token::RightBrace)
+            .ok_or_else(|| ParseError {
+                span: self.cursor.next_span(),
+                msg: "expect `}` after class body".into(),
+            })?;
+
+        Ok(Class { name, methods })
+    }
+
     /// 辅助方法，用于解析`;`
     fn semicolon(&mut self) -> Result<Lexeme, ParseError> {
         self.cursor
@@ -308,17 +347,22 @@ impl Parser<'_> {
         if let Some(equals) = self.cursor.next_if(|t| matches!(t, Token::Equal)) {
             let value = self.assignment()?;
 
-            return if let Expr::Variable(var) = expr {
-                Ok(Assign {
-                    name: var,
+            return match expr {
+                Expr::Variable(variable) => Ok(Assign {
+                    name: variable,
                     value: Box::new(value),
                 }
-                .into())
-            } else {
-                Err(ParseError {
+                .into()),
+                Expr::Get(get) => Ok(Set {
+                    object: get.object,
+                    name: get.name,
+                    value: Box::new(value),
+                }
+                .into()),
+                _ => Err(ParseError {
                     span: equals.span.clone(),
                     msg: "invalid assignment target".into(),
-                })
+                }),
             };
         }
 
@@ -475,7 +519,7 @@ impl Parser<'_> {
     }
 
     /// ```text
-    /// call -> primary ( "(" arguments? ")" )*
+    /// call -> primary ( "(" arguments? ")" | "." IDENTIFIER )*
     ///
     /// arguments -> expression ( "," expression )*
     /// ```
@@ -485,6 +529,19 @@ impl Parser<'_> {
         loop {
             if self.cursor.next_if_eq(Token::LeftParen).is_some() {
                 expr = self.finish_call(expr)?;
+            } else if self.cursor.next_if_eq(Token::Dot).is_some() {
+                let name = self
+                    .cursor
+                    .next_if(|token| matches!(token, Token::Identifier(_)))
+                    .ok_or_else(|| ParseError {
+                        span: self.cursor.next_span(),
+                        msg: "expect property name after '.'".into(),
+                    })?;
+                expr = Get {
+                    object: expr.into(),
+                    name,
+                }
+                .into();
             } else {
                 break;
             }
@@ -547,6 +604,7 @@ impl Parser<'_> {
                     | Token::LeftParen
                     | Token::Identifier(_)
                     | Token::Fun
+                    | Token::This
             )
         }) else {
             return Err(ParseError {
@@ -633,6 +691,7 @@ impl Parser<'_> {
                 .into()
             }
             Token::Identifier(_) => Variable { name: lex }.into(),
+            Token::This => This { keyword: lex }.into(),
             _ => unreachable!(),
         };
 
@@ -689,7 +748,12 @@ impl Parser<'_> {
         Ok(Break { token: brk })
     }
 
-    fn fun(&mut self, kind: &str) -> Result<Function, ParseError> {
+    /// ```text
+    /// function -> IDENTIFIER "(" parameters? ")" block
+    ///
+    /// parameters -> IDENTIFIER ( "," IDENTIFIER )*
+    /// ```
+    fn function(&mut self, kind: &str) -> Result<Function, ParseError> {
         let name = self
             .cursor
             .next_if(|tk| matches!(tk, Token::Identifier(_)))

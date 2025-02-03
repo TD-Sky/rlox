@@ -13,7 +13,6 @@ pub enum Expr {
     Get(Get),
     Grouping(Grouping),
     Literal(Literal),
-    Logical(Logical),
     Set(Set),
     Super(Super),
     This(This),
@@ -74,13 +73,6 @@ impl std::hash::Hash for Literal {
             Self::Null => (),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Logical {
-    pub left: Box<Expr>,
-    pub operator: Lexeme,
-    pub right: Box<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -177,5 +169,23 @@ impl From<Lambda> for Expr {
 impl From<Assign> for Expr {
     fn from(assign: Assign) -> Self {
         Self::Assign(assign)
+    }
+}
+
+impl From<Get> for Expr {
+    fn from(get: Get) -> Self {
+        Self::Get(get)
+    }
+}
+
+impl From<Set> for Expr {
+    fn from(set: Set) -> Self {
+        Self::Set(set)
+    }
+}
+
+impl From<This> for Expr {
+    fn from(this: This) -> Self {
+        Self::This(this)
     }
 }

@@ -32,7 +32,11 @@ impl Env {
     }
 
     pub fn define(&mut self, name: &Lexeme, value: Value) {
-        self.values.insert(name.ident().into(), value);
+        self.insert(name.ident(), value);
+    }
+
+    pub fn insert(&mut self, name: &str, value: Value) {
+        self.values.insert(name.into(), value);
     }
 
     pub fn get(&self, name: &Lexeme) -> Result<Value, ExecError> {
@@ -44,14 +48,14 @@ impl Env {
         })
     }
 
-    pub fn get_at(this: RcCell<Self>, depth: usize, name: &Lexeme) -> Value {
+    pub fn get_at(this: RcCell<Self>, depth: usize, name: &str) -> Value {
         let mut env = this;
         for _ in 0..depth {
             let enclose = env.borrow().enclose.as_ref().unwrap().clone();
             env = enclose;
         }
         let env = env.borrow();
-        env.values.get(name.ident()).cloned().unwrap()
+        env.values.get(name).cloned().unwrap()
     }
 
     pub fn assign(&mut self, name: &Lexeme, value: Value) -> Result<(), ExecError> {
@@ -70,7 +74,7 @@ impl Env {
             env = enclose;
         }
         let mut env = env.borrow_mut();
-        env.values.insert(name.ident().into(), value);
+        env.define(name, value);
     }
 }
 
