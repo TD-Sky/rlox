@@ -70,7 +70,7 @@ impl Env {
             env = enclose;
         }
         let mut env = env.borrow_mut();
-        env.values.insert(name.ident().into(), value);
+        env.define(name, value);
     }
 }
 

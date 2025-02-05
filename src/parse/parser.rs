@@ -517,6 +517,19 @@ impl Parser<'_> {
         loop {
             if self.cursor.next_if_eq(Token::LeftParen).is_some() {
                 expr = self.finish_call(expr)?;
+            } else if self.cursor.next_if_eq(Token::Dot).is_some() {
+                let name = self
+                    .cursor
+                    .next_if(|token| matches!(token, Token::Identifier(_)))
+                    .ok_or_else(|| ParseError {
+                        span: self.cursor.next_span(),
+                        msg: "expect property name after '.'".into(),
+                    })?;
+                expr = Get {
+                    object: expr.into(),
+                    name,
+                }
+                .into();
             } else {
                 break;
             }

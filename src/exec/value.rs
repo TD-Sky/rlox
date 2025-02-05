@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use smol_str::SmolStr;
 
-use super::{call::LoxCallable, intp::LoxClass};
+use super::{call::LoxCallable, intp::LoxInstance};
 use crate::parse::types::Literal;
 
 #[derive(Debug, Clone)]
@@ -12,7 +12,7 @@ pub enum Value {
     String(SmolStr),
     Null,
     Callable(Rc<dyn LoxCallable>),
-    Class(LoxClass),
+    Instance(LoxInstance),
 }
 
 impl PartialEq for Value {
@@ -62,7 +62,7 @@ impl std::fmt::Display for Value {
             Value::String(s) => f.write_str(s),
             Value::Null => f.write_str("null"),
             Value::Callable(c) => write!(f, "{c}"),
-            Value::Class(cls) => write!(f, "{cls}"),
+            Value::Instance(it) => write!(f, "{it}"),
         }
     }
 }
@@ -87,8 +87,8 @@ where
     }
 }
 
-impl From<LoxClass> for Value {
-    fn from(cls: LoxClass) -> Self {
-        Self::Class(cls)
+impl From<LoxInstance> for Value {
+    fn from(value: LoxInstance) -> Self {
+        Self::Instance(value)
     }
 }

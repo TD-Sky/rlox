@@ -37,7 +37,6 @@ impl Spanned for Expr {
             Expr::Get(e) => e.span(),
             Expr::Grouping(e) => e.span(),
             Expr::Literal(e) => e.span(),
-            Expr::Logical(e) => e.span(),
             Expr::Set(e) => e.span(),
             Expr::Super(e) => e.span(),
             Expr::This(e) => e.span(),
@@ -87,12 +86,6 @@ impl Spanned for Literal {
             Literal::String(_) => todo!(),
             Literal::Null => todo!(),
         }
-    }
-}
-
-impl Spanned for Logical {
-    fn span(&self) -> Span {
-        self.left.span().enclose(&self.right.span())
     }
 }
 

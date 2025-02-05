@@ -62,7 +62,10 @@ impl Interpreter {
             Expr::Conditional(expr) => self.conditional(expr),
             Expr::Call(expr) => self.call(expr),
             Expr::Lambda(expr) => Ok(LoxLambda::new(expr, &self.env).into()),
-            _ => unreachable!(),
+            Expr::Get(get) => self.get(get),
+            Expr::Set(set) => todo!(),
+            Expr::Super(_) => todo!(),
+            Expr::This(this) => todo!(),
         }
     }
 
@@ -324,6 +327,17 @@ impl Interpreter {
         Ok(value)
     }
 
+    fn get(&mut self, get: &Get) -> Result<Value, ExecError> {
+        if let Value::Instance(instance) = self.eval(&get.object)? {
+            instance.get(&get.name)
+        } else {
+            Err(ExecError {
+                span: get.span(),
+                msg: "only instances have properties".into(),
+            })
+        }
+    }
+
     fn if_stmt(&mut self, stmt: &If) -> Result<StmtValue, ExecError> {
         let If {
             condition,
@@ -456,7 +470,7 @@ impl Interpreter {
         let name = &class.name;
         self.env.borrow_mut().define(name, Value::Null);
         let class = LoxClass::new(name.ident());
-        self.env.borrow_mut().assign(name, class.into())?;
+        self.env.borrow_mut().define(name, class.into());
         Ok(())
     }
 
@@ -594,5 +608,42 @@ impl LoxClass {
 impl std::fmt::Display for LoxClass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.name)
+    }
+}
+
+impl LoxCallable for LoxClass {
+    fn arity(&self) -> usize {
+        0
+    }
+
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
+        LoxInstance {
+            class: self.clone(),
+            fields: Default::default(),
+        }
+        .into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoxInstance {
+    class: LoxClass,
+    fields: HashMap<SmolStr, Value>,
+}
+
+impl LoxInstance {
+    pub fn get(&self, field: &Lexeme) -> Result<Value, ExecError> {
+        let name = field.ident();
+
+        self.fields.get(name).cloned().ok_or_else(|| ExecError {
+            span: field.span.clone(),
+            msg: format!("undefined property `{name}`"),
+        })
+    }
+}
+
+impl std::fmt::Display for LoxInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} instance", self.class)
     }
 }

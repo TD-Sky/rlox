@@ -43,12 +43,12 @@ impl<'i> Resolver<'i> {
             Expr::Call(call) => self.call(call),
             Expr::Grouping(grouping) => self.resolve_expr(&grouping.expression),
             Expr::Literal(_) => Ok(()),
-            Expr::Logical(logical) => self.logical(logical),
             Expr::Unary(unary) => self.unary(unary),
             Expr::Variable(variable) => self.variable(variable, expr),
             Expr::Conditional(conditional) => self.conditional(conditional),
             Expr::Lambda(lambda) => self.lambda(lambda),
-            Expr::Get(_) | Expr::Set(_) | Expr::Super(_) | Expr::This(_) => {
+            Expr::Get(get) => self.resolve_expr(&get.object),
+            Expr::Set(_) | Expr::Super(_) | Expr::This(_) => {
                 unimplemented!()
             }
         }
@@ -260,12 +260,6 @@ impl Resolver<'_> {
     }
 
     fn binary(&mut self, expr: &Binary) -> Result<(), ResolveError> {
-        self.resolve_expr(&expr.left)?;
-        self.resolve_expr(&expr.right)?;
-        Ok(())
-    }
-
-    fn logical(&mut self, expr: &Logical) -> Result<(), ResolveError> {
         self.resolve_expr(&expr.left)?;
         self.resolve_expr(&expr.right)?;
         Ok(())
