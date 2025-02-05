@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::mem;
+use std::{collections::HashMap, rc::Rc};
 
 use smol_str::{SmolStr, SmolStrBuilder};
 
@@ -63,7 +63,7 @@ impl Interpreter {
             Expr::Call(expr) => self.call(expr),
             Expr::Lambda(expr) => Ok(LoxLambda::new(expr, &self.env).into()),
             Expr::Get(get) => self.get(get),
-            Expr::Set(set) => todo!(),
+            Expr::Set(set) => self.set(set),
             Expr::Super(_) => todo!(),
             Expr::This(this) => todo!(),
         }
@@ -114,7 +114,7 @@ impl Interpreter {
     }
 
     fn block(&mut self, block: &Block) -> Result<StmtValue, ExecError> {
-        self.enter_env();
+        self.begin_scope();
 
         let res = || -> Result<StmtValue, ExecError> {
             for stmt in &block.stmts {
@@ -128,7 +128,7 @@ impl Interpreter {
             Ok(StmtValue::Finish)
         }();
 
-        self.leave_env();
+        self.end_scope();
 
         res
     }
@@ -338,6 +338,20 @@ impl Interpreter {
         }
     }
 
+    fn set(&mut self, set: &Set) -> Result<Value, ExecError> {
+        let Value::Instance(mut instance) = self.eval(&set.object)? else {
+            return Err(ExecError {
+                span: set.span(),
+                msg: "only instances have fields".into(),
+            });
+        };
+
+        let value = self.eval(&set.value)?;
+        instance.set(&set.name, value.clone());
+
+        Ok(value)
+    }
+
     fn if_stmt(&mut self, stmt: &If) -> Result<StmtValue, ExecError> {
         let If {
             condition,
@@ -387,8 +401,8 @@ impl Interpreter {
         let mut new_env = false;
         match init.as_deref() {
             Some(Stmt::Var(var)) => {
-                self.enter_env();
-                self.declare_var(var).inspect_err(|_| self.leave_env())?;
+                self.begin_scope();
+                self.declare_var(var).inspect_err(|_| self.end_scope())?;
                 new_env = true;
             }
             Some(Stmt::Expr(expr)) => {
@@ -442,7 +456,7 @@ impl Interpreter {
 
         self.loop_depth -= 1;
         if new_env {
-            self.leave_env();
+            self.end_scope();
         }
 
         res
@@ -469,17 +483,24 @@ impl Interpreter {
     fn class(&mut self, class: &Class) -> Result<(), ExecError> {
         let name = &class.name;
         self.env.borrow_mut().define(name, Value::Null);
-        let class = LoxClass::new(name.ident());
+
+        let methods = class
+            .methods
+            .iter()
+            .map(|method| (method.name.ident(), LoxFunction::new(method, &self.env)));
+        let class = LoxClass::new(name.ident(), methods);
+
         self.env.borrow_mut().define(name, class.into());
+
         Ok(())
     }
 
-    fn enter_env(&mut self) {
+    fn begin_scope(&mut self) {
         let env = Env::from(&self.env);
         self.env = env.into();
     }
 
-    fn leave_env(&mut self) {
+    fn end_scope(&mut self) {
         let env = self
             .env
             .borrow_mut()
@@ -597,11 +618,15 @@ impl LoxCallable for LoxLambda {
 #[derive(Debug, Clone)]
 pub struct LoxClass {
     name: SmolStr,
+    methods: HashMap<SmolStr, Rc<LoxFunction>>,
 }
 
 impl LoxClass {
-    pub fn new(name: &str) -> Self {
-        Self { name: name.into() }
+    pub fn new<'a>(name: &str, methods: impl Iterator<Item = (&'a str, LoxFunction)>) -> Self {
+        Self {
+            name: name.into(),
+            methods: methods.map(|(s, f)| (s.into(), Rc::new(f))).collect(),
+        }
     }
 }
 
@@ -635,10 +660,23 @@ impl LoxInstance {
     pub fn get(&self, field: &Lexeme) -> Result<Value, ExecError> {
         let name = field.ident();
 
-        self.fields.get(name).cloned().ok_or_else(|| ExecError {
-            span: field.span.clone(),
-            msg: format!("undefined property `{name}`"),
-        })
+        self.fields
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                self.class
+                    .methods
+                    .get(name)
+                    .map(|v| Value::Callable(v.clone() as _))
+            })
+            .ok_or_else(|| ExecError {
+                span: field.span.clone(),
+                msg: format!("undefined property `{name}`"),
+            })
+    }
+
+    pub fn set(&mut self, field: &Lexeme, value: Value) {
+        self.fields.insert(field.ident().into(), value);
     }
 }
 

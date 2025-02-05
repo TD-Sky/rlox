@@ -340,17 +340,22 @@ impl Parser<'_> {
         if let Some(equals) = self.cursor.next_if(|t| matches!(t, Token::Equal)) {
             let value = self.assignment()?;
 
-            return if let Expr::Variable(var) = expr {
-                Ok(Assign {
-                    name: var,
+            return match expr {
+                Expr::Variable(variable) => Ok(Assign {
+                    name: variable,
                     value: Box::new(value),
                 }
-                .into())
-            } else {
-                Err(ParseError {
+                .into()),
+                Expr::Get(get) => Ok(Set {
+                    object: get.object,
+                    name: get.name,
+                    value: Box::new(value),
+                }
+                .into()),
+                _ => Err(ParseError {
                     span: equals.span.clone(),
                     msg: "invalid assignment target".into(),
-                })
+                }),
             };
         }
 
@@ -592,6 +597,7 @@ impl Parser<'_> {
                     | Token::LeftParen
                     | Token::Identifier(_)
                     | Token::Fun
+                    | Token::This
             )
         }) else {
             return Err(ParseError {
@@ -678,6 +684,7 @@ impl Parser<'_> {
                 .into()
             }
             Token::Identifier(_) => Variable { name: lex }.into(),
+            Token::This => This { keyword: lex }.into(),
             _ => unreachable!(),
         };
 

@@ -48,7 +48,9 @@ impl<'i> Resolver<'i> {
             Expr::Conditional(conditional) => self.conditional(conditional),
             Expr::Lambda(lambda) => self.lambda(lambda),
             Expr::Get(get) => self.resolve_expr(&get.object),
-            Expr::Set(_) | Expr::Super(_) | Expr::This(_) => {
+            Expr::Set(set) => self.set(set),
+            Expr::This(this) => self.resolve_local(expr, this.keyword.ident()),
+            Expr::Super(_) => {
                 unimplemented!()
             }
         }
@@ -289,6 +291,12 @@ impl Resolver<'_> {
         let res = self.block(&lambda.body);
         self.end_scope();
         res
+    }
+
+    fn set(&mut self, set: &Set) -> Result<(), ResolveError> {
+        self.resolve_expr(&set.object)?;
+        self.resolve_expr(&set.value)?;
+        Ok(())
     }
 }
 

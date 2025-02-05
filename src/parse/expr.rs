@@ -177,3 +177,15 @@ impl From<Get> for Expr {
         Self::Get(get)
     }
 }
+
+impl From<Set> for Expr {
+    fn from(set: Set) -> Self {
+        Self::Set(set)
+    }
+}
+
+impl From<This> for Expr {
+    fn from(this: This) -> Self {
+        Self::This(this)
+    }
+}
