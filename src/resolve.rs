@@ -17,6 +17,7 @@ pub struct Resolver<'i> {
     /// 所有作用域叠成的栈，会动态变化；
     /// 映射：变量名到是否初始化
     scopes: Vec<HashMap<SmolStr, bool>>,
+    in_class: bool,
     interpreter: &'i mut Interpreter,
 }
 
@@ -24,6 +25,7 @@ impl<'i> Resolver<'i> {
     pub fn new(interpreter: &'i mut Interpreter) -> Self {
         Self {
             interpreter,
+            in_class: false,
             scopes: vec![],
         }
     }
@@ -49,7 +51,7 @@ impl<'i> Resolver<'i> {
             Expr::Lambda(lambda) => self.lambda(lambda),
             Expr::Get(get) => self.resolve_expr(&get.object),
             Expr::Set(set) => self.set(set),
-            Expr::This(this) => self.resolve_local(expr, this.keyword.ident()),
+            Expr::This(this) => self.this(this, expr),
             Expr::Super(_) => {
                 unimplemented!()
             }
@@ -72,15 +74,12 @@ impl Resolver<'_> {
             Stmt::Fun(function) => self.func_stmt(function),
             Stmt::Return(rt) => self.return_stmt(rt),
             Stmt::For(stmt) => self.for_stmt(stmt),
-            Stmt::Class(class) => {
-                self.class(class);
-                Ok(())
-            }
+            Stmt::Class(class) => self.class(class),
             Stmt::Break(_) => Ok(()),
         }
     }
 
-    fn resolve_func(&mut self, func: &Function) -> Result<(), ResolveError> {
+    fn resolve_func(&mut self, func: &Function, ft: FunctionType) -> Result<(), ResolveError> {
         self.begin_scope();
         for param in &func.params {
             let name = param.ident();
@@ -188,7 +187,7 @@ impl Resolver<'_> {
         self.declare(name);
         self.define(name);
 
-        self.resolve_func(func)
+        self.resolve_func(func, FunctionType::Function)
     }
 
     fn if_stmt(&mut self, stmt: &If) -> Result<(), ResolveError> {
@@ -255,10 +254,24 @@ impl Resolver<'_> {
         res
     }
 
-    fn class(&mut self, class: &Class) {
+    fn class(&mut self, class: &Class) -> Result<(), ResolveError> {
+        self.in_class = true;
+
         let name = class.name.ident();
         self.declare(name);
         self.define(name);
+
+        self.begin_scope();
+        self.scopes.last_mut().unwrap().insert("this".into(), true);
+
+        for method in &class.methods {
+            self.resolve_func(method, FunctionType::Method)?;
+        }
+
+        self.end_scope();
+        self.in_class = false;
+
+        Ok(())
     }
 
     fn binary(&mut self, expr: &Binary) -> Result<(), ResolveError> {
@@ -298,10 +311,29 @@ impl Resolver<'_> {
         self.resolve_expr(&set.value)?;
         Ok(())
     }
+
+    fn this(&mut self, this: &This, shell: &Expr) -> Result<(), ResolveError> {
+        if self.in_class {
+            self.resolve_local(shell, this.keyword.ident())
+        } else {
+            Err(ResolveError {
+                span: this.span(),
+                msg: "can't use `this` outside of a class".into(),
+            })
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct ResolveError {
     pub span: Span,
     pub msg: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FunctionType {
+    None,
+    Function,
+    Init,
+    Method,
 }

@@ -65,7 +65,7 @@ impl Interpreter {
             Expr::Get(get) => self.get(get),
             Expr::Set(set) => self.set(set),
             Expr::Super(_) => todo!(),
-            Expr::This(this) => todo!(),
+            Expr::This(this) => self.lookup_var(&this.keyword, expr),
         }
     }
 
@@ -109,7 +109,7 @@ impl Interpreter {
     }
 
     fn declare_fun(&mut self, fun: &Function) {
-        let lox_fun = LoxFunction::new(fun, &self.env);
+        let lox_fun = LoxFunction::new(fun, &self.env, false);
         self.env.borrow_mut().define(&fun.name, lox_fun.into());
     }
 
@@ -484,10 +484,11 @@ impl Interpreter {
         let name = &class.name;
         self.env.borrow_mut().define(name, Value::Null);
 
-        let methods = class
-            .methods
-            .iter()
-            .map(|method| (method.name.ident(), LoxFunction::new(method, &self.env)));
+        let methods = class.methods.iter().map(|method| {
+            let mname = method.name.ident();
+
+            (mname, LoxFunction::new(method, &self.env, mname == "init"))
+        });
         let class = LoxClass::new(name.ident(), methods);
 
         self.env.borrow_mut().define(name, class.into());
@@ -512,7 +513,7 @@ impl Interpreter {
 
     fn lookup_var(&self, name: &Lexeme, expr: &Expr) -> Result<Value, ExecError> {
         if let Some(&depth) = self.locals.get(expr) {
-            Ok(Env::get_at(self.env.clone(), depth, name))
+            Ok(Env::get_at(self.env.clone(), depth, name.ident()))
         } else {
             GLOBAL_ENV.with(|env| env.borrow().get(name))
         }
@@ -537,13 +538,25 @@ pub struct LoxFunction {
     declare: Function,
     /// 函数声明时所在的上下文，调用时以此为env.enclose
     closure: RcCell<Env>,
+    is_init: bool,
 }
 
 impl LoxFunction {
-    fn new(declare: &Function, closure: &RcCell<Env>) -> Self {
+    fn new(declare: &Function, closure: &RcCell<Env>, is_init: bool) -> Self {
         Self {
             declare: declare.clone(),
             closure: closure.clone(),
+            is_init,
+        }
+    }
+
+    fn bind(&self, this: &LoxInstance) -> Self {
+        let mut env = Env::from(&self.closure);
+        env.insert("this", this.clone().into());
+        Self {
+            declare: self.declare.clone(),
+            closure: RcCell::new(env),
+            is_init: self.is_init,
         }
     }
 }
@@ -570,7 +583,11 @@ impl LoxCallable for LoxFunction {
         let res = intp.fun_block(&self.declare.body);
         intp.env = env;
 
-        res.unwrap_or(Value::Null)
+        if self.is_init {
+            Env::get_at(self.closure.clone(), 0, "this")
+        } else {
+            res.unwrap_or(Value::Null)
+        }
     }
 }
 
@@ -638,15 +655,23 @@ impl std::fmt::Display for LoxClass {
 
 impl LoxCallable for LoxClass {
     fn arity(&self) -> usize {
-        0
+        self.methods
+            .get("init")
+            .map(|f| f.arity())
+            .unwrap_or_default()
     }
 
     fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
-        LoxInstance {
+        let instance = LoxInstance {
             class: self.clone(),
             fields: Default::default(),
+        };
+
+        if let Some(init) = self.methods.get("init") {
+            init.bind(&instance).call(intp, args);
         }
-        .into()
+
+        instance.into()
     }
 }
 
@@ -663,12 +688,7 @@ impl LoxInstance {
         self.fields
             .get(name)
             .cloned()
-            .or_else(|| {
-                self.class
-                    .methods
-                    .get(name)
-                    .map(|v| Value::Callable(v.clone() as _))
-            })
+            .or_else(|| self.class.methods.get(name).map(|v| v.bind(self).into()))
             .ok_or_else(|| ExecError {
                 span: field.span.clone(),
                 msg: format!("undefined property `{name}`"),
