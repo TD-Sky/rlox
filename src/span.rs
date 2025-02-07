@@ -136,3 +136,13 @@ impl Spanned for Block {
         self.left_brace.span.enclose(&self.right_brace.span)
     }
 }
+
+impl Spanned for Return {
+    fn span(&self) -> Span {
+        if let Some(expr) = &self.expr {
+            self.keyword.span.enclose(&expr.span())
+        } else {
+            self.keyword.span.clone()
+        }
+    }
+}

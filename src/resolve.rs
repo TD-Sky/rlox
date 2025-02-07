@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
 use smol_str::SmolStr;
 
@@ -18,6 +18,7 @@ pub struct Resolver<'i> {
     /// 映射：变量名到是否初始化
     scopes: Vec<HashMap<SmolStr, bool>>,
     in_class: bool,
+    current_ft: Option<FunctionType>,
     interpreter: &'i mut Interpreter,
 }
 
@@ -26,6 +27,7 @@ impl<'i> Resolver<'i> {
         Self {
             interpreter,
             in_class: false,
+            current_ft: None,
             scopes: vec![],
         }
     }
@@ -80,6 +82,8 @@ impl Resolver<'_> {
     }
 
     fn resolve_func(&mut self, func: &Function, ft: FunctionType) -> Result<(), ResolveError> {
+        let enclose_ft = mem::replace(&mut self.current_ft, Some(ft));
+
         self.begin_scope();
         for param in &func.params {
             let name = param.ident();
@@ -88,6 +92,8 @@ impl Resolver<'_> {
         }
         let res = self.block(&func.body);
         self.end_scope();
+
+        self.current_ft = enclose_ft;
 
         res
     }
@@ -201,9 +207,17 @@ impl Resolver<'_> {
     }
 
     fn return_stmt(&mut self, stmt: &Return) -> Result<(), ResolveError> {
+        if self.current_ft.is_none() {
+            return Err(ResolveError {
+                span: stmt.span(),
+                msg: "can't return from top-level code".into(),
+            });
+        }
+
         if let Some(value) = &stmt.expr {
             self.resolve_expr(value)?;
         }
+
         Ok(())
     }
 
@@ -255,7 +269,7 @@ impl Resolver<'_> {
     }
 
     fn class(&mut self, class: &Class) -> Result<(), ResolveError> {
-        self.in_class = true;
+        let enclose_in_class = mem::replace(&mut self.in_class, true);
 
         let name = class.name.ident();
         self.declare(name);
@@ -265,11 +279,17 @@ impl Resolver<'_> {
         self.scopes.last_mut().unwrap().insert("this".into(), true);
 
         for method in &class.methods {
-            self.resolve_func(method, FunctionType::Method)?;
+            let ft = if method.name.ident() == "init" {
+                FunctionType::Init
+            } else {
+                FunctionType::Method
+            };
+
+            self.resolve_func(method, ft)?;
         }
 
         self.end_scope();
-        self.in_class = false;
+        self.in_class = enclose_in_class;
 
         Ok(())
     }
@@ -332,7 +352,6 @@ pub struct ResolveError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FunctionType {
-    None,
     Function,
     Init,
     Method,
