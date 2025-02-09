@@ -519,7 +519,7 @@ impl Parser<'_> {
     }
 
     /// ```text
-    /// call -> primary ( "(" arguments? ")" )*
+    /// call -> primary ( "(" arguments? ")" | "." IDENTIFIER )*
     ///
     /// arguments -> expression ( "," expression )*
     /// ```

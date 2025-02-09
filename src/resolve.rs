@@ -207,11 +207,20 @@ impl Resolver<'_> {
     }
 
     fn return_stmt(&mut self, stmt: &Return) -> Result<(), ResolveError> {
-        if self.current_ft.is_none() {
-            return Err(ResolveError {
-                span: stmt.span(),
-                msg: "can't return from top-level code".into(),
-            });
+        match &self.current_ft {
+            Some(FunctionType::Init) => {
+                return Err(ResolveError {
+                    span: stmt.span(),
+                    msg: "can't return a value from an initializer".into(),
+                });
+            }
+            None => {
+                return Err(ResolveError {
+                    span: stmt.span(),
+                    msg: "can't return from top-level code".into(),
+                });
+            }
+            _ => (),
         }
 
         if let Some(value) = &stmt.expr {

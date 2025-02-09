@@ -64,8 +64,8 @@ impl Interpreter {
             Expr::Lambda(expr) => Ok(LoxLambda::new(expr, &self.env).into()),
             Expr::Get(get) => self.get(get),
             Expr::Set(set) => self.set(set),
-            Expr::Super(_) => todo!(),
             Expr::This(this) => self.lookup_var(&this.keyword, expr),
+            Expr::Super(_) => todo!(),
         }
     }
 
@@ -482,6 +482,7 @@ impl Interpreter {
 
     fn class(&mut self, class: &Class) -> Result<(), ExecError> {
         let name = &class.name;
+        // 先占位，以便类方法可以访问到类本身
         self.env.borrow_mut().define(name, Value::Null);
 
         let methods = class.methods.iter().map(|method| {
@@ -550,6 +551,7 @@ impl LoxFunction {
         }
     }
 
+    /// 创建一个存在`this`实例的新环境的`LoxFunction`
     fn bind(&self, this: &LoxInstance) -> Self {
         let mut env = Env::from(&self.closure);
         env.insert("this", this.clone().into());
@@ -584,6 +586,7 @@ impl LoxCallable for LoxFunction {
         intp.env = env;
 
         if self.is_init {
+            // 调用初始化方法，就把实例返回去
             Env::get_at(self.closure.clone(), 0, "this")
         } else {
             res.unwrap_or(Value::Null)
@@ -675,6 +678,7 @@ impl LoxCallable for LoxClass {
     }
 }
 
+/// 实例就是具备状态的类
 #[derive(Debug, Clone)]
 pub struct LoxInstance {
     class: LoxClass,
