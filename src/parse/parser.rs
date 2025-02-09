@@ -93,6 +93,10 @@ impl Parser<'_> {
     ///            | printStmt
     ///            | block
     ///            | ifStmt
+    ///            | funDecl
+    ///            | class
+    ///
+    /// funDecl -> "fun" function
     /// ```
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         let stmt = match self.cursor.next_if(is_statement_begin) {
@@ -290,6 +294,9 @@ impl Parser<'_> {
         })
     }
 
+    /// ```text
+    /// class -> "class" IDENTIFIER "{" function* "}"
+    /// ```
     fn class(&mut self, _class: Lexeme) -> Result<Class, ParseError> {
         let name = self
             .cursor
@@ -741,6 +748,11 @@ impl Parser<'_> {
         Ok(Break { token: brk })
     }
 
+    /// ```text
+    /// function -> IDENTIFIER "(" parameters? ")" block
+    ///
+    /// parameters -> IDENTIFIER ( "," IDENTIFIER )*
+    /// ```
     fn function(&mut self, kind: &str) -> Result<Function, ParseError> {
         let name = self
             .cursor
