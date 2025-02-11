@@ -1,14 +1,17 @@
 use std::time::SystemTime;
 
-use super::{Interpreter, Value};
+use downcast_rs::{impl_downcast, Downcast};
+
+use super::{ExecError, Interpreter, Value};
 
 pub type LoxCall = dyn Fn(&mut Interpreter, Vec<Value>) -> Value;
 
-pub trait LoxCallable: std::fmt::Debug + std::fmt::Display {
+pub trait LoxCallable: std::fmt::Debug + std::fmt::Display + Downcast {
     fn arity(&self) -> usize;
 
-    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value;
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Result<Value, ExecError>;
 }
+impl_downcast!(LoxCallable);
 
 pub struct NativeFn {
     pub arity: usize,
@@ -35,8 +38,8 @@ impl LoxCallable for NativeFn {
         self.arity
     }
 
-    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
-        (self.call)(intp, args)
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Result<Value, ExecError> {
+        Ok((self.call)(intp, args))
     }
 }
 

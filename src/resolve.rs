@@ -1,4 +1,5 @@
-use std::{collections::HashMap, mem};
+use std::collections::HashMap;
+use std::mem;
 
 use smol_str::SmolStr;
 
@@ -90,7 +91,7 @@ impl Resolver<'_> {
             self.declare(name);
             self.define(name);
         }
-        let res = self.block(&func.body);
+        let res = self.resolve_stmts(&func.body.stmts);
         self.end_scope();
 
         self.current_ft = enclose_ft;
@@ -284,20 +285,29 @@ impl Resolver<'_> {
         self.declare(name);
         self.define(name);
 
+        // 类层面的作用域对应于翻译时的实例绑定
         self.begin_scope();
-        self.scopes.last_mut().unwrap().insert("this".into(), true);
+        let res = || -> Result<(), ResolveError> {
+            self.scopes.last_mut().unwrap().insert("this".into(), true);
+            for method in &class.methods {
+                let ft = if method.name.ident() == "init" {
+                    FunctionType::Init
+                } else {
+                    FunctionType::Method
+                };
 
-        for method in &class.methods {
-            let ft = if method.name.ident() == "init" {
-                FunctionType::Init
-            } else {
-                FunctionType::Method
-            };
+                self.resolve_func(method, ft)?;
+            }
 
-            self.resolve_func(method, ft)?;
+            Ok(())
+        }();
+        self.end_scope();
+        res?;
+
+        for method in &class.class_methods {
+            self.resolve_func(method, FunctionType::Method)?;
         }
 
-        self.end_scope();
         self.in_class = enclose_in_class;
 
         Ok(())

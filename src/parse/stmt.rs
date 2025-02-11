@@ -69,8 +69,10 @@ pub struct Return {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Class {
+    pub keyword: Lexeme,
     pub name: Lexeme,
     pub methods: Vec<Function>,
+    pub class_methods: Vec<Function>,
 }
 
 impl From<Var> for Stmt {

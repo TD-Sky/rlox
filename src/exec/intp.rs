@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::mem;
-use std::{collections::HashMap, rc::Rc};
+use std::rc::Rc;
 
 use smol_str::{SmolStr, SmolStrBuilder};
 
@@ -309,7 +310,7 @@ impl Interpreter {
             });
         }
 
-        Ok(callee.call(self, args))
+        callee.call(self, args)
     }
 
     fn assign(&mut self, expr: &Assign, shell: &Expr) -> Result<Value, ExecError> {
@@ -328,13 +329,22 @@ impl Interpreter {
     }
 
     fn get(&mut self, get: &Get) -> Result<Value, ExecError> {
-        if let Value::Instance(instance) = self.eval(&get.object)? {
-            instance.get(&get.name)
-        } else {
-            Err(ExecError {
+        match self.eval(&get.object)? {
+            Value::Instance(instance) => instance.get(&get.name),
+            Value::Callable(c) => {
+                if let Some(class) = c.as_ref().downcast_ref::<LoxClass>() {
+                    class.get(&get.name)
+                } else {
+                    Err(ExecError {
+                        span: get.span(),
+                        msg: "only instances or classes have properties".into(),
+                    })
+                }
+            }
+            _ => Err(ExecError {
                 span: get.span(),
-                msg: "only instances have properties".into(),
-            })
+                msg: "only instances or classes have properties".into(),
+            }),
         }
     }
 
@@ -490,7 +500,12 @@ impl Interpreter {
 
             (mname, LoxFunction::new(method, &self.env, mname == "init"))
         });
-        let class = LoxClass::new(name.ident(), methods);
+        let class_methods = class.class_methods.iter().map(|method| {
+            let mname = method.name.ident();
+
+            (mname, LoxFunction::new(method, &self.env, false))
+        });
+        let class = LoxClass::new(name.ident(), methods, class_methods);
 
         self.env.borrow_mut().define(name, class.into());
 
@@ -574,7 +589,7 @@ impl LoxCallable for LoxFunction {
         self.declare.params.len()
     }
 
-    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Result<Value, ExecError> {
         let env: RcCell<_> = Env::from(&self.closure).into();
 
         for (param, arg) in self.declare.params.iter().zip(args) {
@@ -587,9 +602,9 @@ impl LoxCallable for LoxFunction {
 
         if self.is_init {
             // 调用初始化方法，就把实例返回去
-            Env::get_at(self.closure.clone(), 0, "this")
+            res.map(|_| Env::get_at(self.closure.clone(), 0, "this"))
         } else {
-            res.unwrap_or(Value::Null)
+            res
         }
     }
 }
@@ -620,7 +635,7 @@ impl LoxCallable for LoxLambda {
         self.declare.params.len()
     }
 
-    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Result<Value, ExecError> {
         let env: RcCell<_> = Env::from(&self.closure).into();
 
         for (param, arg) in self.declare.params.iter().zip(args) {
@@ -631,7 +646,7 @@ impl LoxCallable for LoxLambda {
         let res = intp.fun_block(&self.declare.body);
         intp.env = env;
 
-        res.unwrap_or(Value::Null)
+        res
     }
 }
 
@@ -639,14 +654,32 @@ impl LoxCallable for LoxLambda {
 pub struct LoxClass {
     name: SmolStr,
     methods: HashMap<SmolStr, Rc<LoxFunction>>,
+    class_methods: HashMap<SmolStr, Rc<LoxFunction>>,
 }
 
 impl LoxClass {
-    pub fn new<'a>(name: &str, methods: impl Iterator<Item = (&'a str, LoxFunction)>) -> Self {
+    pub fn new<'a>(
+        name: &str,
+        methods: impl Iterator<Item = (&'a str, LoxFunction)>,
+        class_methods: impl Iterator<Item = (&'a str, LoxFunction)>,
+    ) -> Self {
         Self {
             name: name.into(),
             methods: methods.map(|(s, f)| (s.into(), Rc::new(f))).collect(),
+            class_methods: class_methods.map(|(s, f)| (s.into(), Rc::new(f))).collect(),
         }
+    }
+
+    pub fn get(&self, prop: &Lexeme) -> Result<Value, ExecError> {
+        let name = prop.ident();
+
+        self.class_methods
+            .get(name)
+            .map(|v| Value::Callable(v.clone()))
+            .ok_or_else(|| ExecError {
+                span: prop.span.clone(),
+                msg: format!("undefined property `{name}`"),
+            })
     }
 }
 
@@ -664,17 +697,17 @@ impl LoxCallable for LoxClass {
             .unwrap_or_default()
     }
 
-    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Value {
+    fn call(&self, intp: &mut Interpreter, args: Vec<Value>) -> Result<Value, ExecError> {
         let instance = LoxInstance {
             class: self.clone(),
             fields: Default::default(),
         };
 
         if let Some(init) = self.methods.get("init") {
-            init.bind(&instance).call(intp, args);
+            init.bind(&instance).call(intp, args)?;
         }
 
-        instance.into()
+        Ok(instance.into())
     }
 }
 
@@ -682,7 +715,7 @@ impl LoxCallable for LoxClass {
 #[derive(Debug, Clone)]
 pub struct LoxInstance {
     class: LoxClass,
-    fields: HashMap<SmolStr, Value>,
+    fields: RcCell<HashMap<SmolStr, Value>>,
 }
 
 impl LoxInstance {
@@ -690,6 +723,7 @@ impl LoxInstance {
         let name = field.ident();
 
         self.fields
+            .borrow()
             .get(name)
             .cloned()
             .or_else(|| self.class.methods.get(name).map(|v| v.bind(self).into()))
@@ -700,7 +734,7 @@ impl LoxInstance {
     }
 
     pub fn set(&mut self, field: &Lexeme, value: Value) {
-        self.fields.insert(field.ident().into(), value);
+        self.fields.borrow_mut().insert(field.ident().into(), value);
     }
 }
 

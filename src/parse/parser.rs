@@ -297,7 +297,7 @@ impl Parser<'_> {
     /// ```text
     /// class -> "class" IDENTIFIER "{" function* "}"
     /// ```
-    fn class(&mut self, _class: Lexeme) -> Result<Class, ParseError> {
+    fn class(&mut self, class: Lexeme) -> Result<Class, ParseError> {
         let name = self
             .cursor
             .next_if(|t| matches!(t, Token::Identifier(_)))
@@ -309,23 +309,37 @@ impl Parser<'_> {
         self.cursor
             .next_if_eq(Token::LeftBrace)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span(),
+                span: self.cursor.prev_span(),
                 msg: "expect `{` before class body".into(),
             })?;
 
         let mut methods = vec![];
-        while !self.cursor.is_at_end() && self.cursor.next_if_eq(Token::RightBrace).is_none() {
-            methods.push(self.function("method")?);
+        let mut class_methods = vec![];
+        while self
+            .cursor
+            .peek()
+            .is_some_and(|lex| lex.token != Token::RightBrace)
+        {
+            if self.cursor.next_if_eq(Token::Class).is_some() {
+                class_methods.push(self.function("method")?);
+            } else {
+                methods.push(self.function("method")?);
+            }
         }
 
         self.cursor
             .next_if_eq(Token::RightBrace)
             .ok_or_else(|| ParseError {
-                span: self.cursor.next_span(),
+                span: self.cursor.prev_span(),
                 msg: "expect `}` after class body".into(),
             })?;
 
-        Ok(Class { name, methods })
+        Ok(Class {
+            keyword: class,
+            name,
+            methods,
+            class_methods,
+        })
     }
 
     /// 辅助方法，用于解析`;`
@@ -898,6 +912,7 @@ fn is_statement_begin(token: &Token) -> bool {
                 | Token::Break
                 | Token::Fun
                 | Token::Return
+                | Token::Class
         )
     }
 }

@@ -14,7 +14,8 @@ impl Lexeme {
     pub fn ident(&self) -> &str {
         match &self.token {
             Token::Identifier(name) => name,
-            _ => panic!("expected Identifier"),
+            Token::This => "this",
+            _ => panic!("expected Identifier or This"),
         }
     }
 }
