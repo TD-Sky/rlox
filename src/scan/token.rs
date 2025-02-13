@@ -15,6 +15,7 @@ impl Lexeme {
         match &self.token {
             Token::Identifier(name) => name,
             Token::This => "this",
+            Token::Super => "super",
             _ => panic!("expected Identifier or This"),
         }
     }

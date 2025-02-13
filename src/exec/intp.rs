@@ -66,7 +66,7 @@ impl Interpreter {
             Expr::Get(get) => self.get(get),
             Expr::Set(set) => self.set(set),
             Expr::This(this) => self.lookup_var(&this.keyword, expr),
-            Expr::Super(_) => todo!(),
+            Expr::Super(sp) => self.super_expr(sp, expr),
         }
     }
 
@@ -333,7 +333,9 @@ impl Interpreter {
             Value::Instance(instance) => instance.get(&get.name),
             Value::Callable(c) => {
                 if let Some(class) = c.as_ref().downcast_ref::<LoxClass>() {
-                    class.get(&get.name)
+                    class
+                        .get_class_method(&get.name)
+                        .map(|f| Value::Callable(f))
                 } else {
                     Err(ExecError {
                         span: get.span(),
@@ -492,24 +494,73 @@ impl Interpreter {
 
     fn class(&mut self, class: &Class) -> Result<(), ExecError> {
         let name = &class.name;
+
+        let mut super_class = None;
+        if let Some(sclass) = &class.super_class {
+            let sclass = self
+                .lookup_var(&sclass.name, &Expr::Variable(sclass.clone()))?
+                .into_class()
+                .ok_or_else(|| ExecError {
+                    span: sclass.span(),
+                    msg: "super class must be a class".into(),
+                })?;
+            super_class = Some(sclass);
+        }
+
         // 先占位，以便类方法可以访问到类本身
         self.env.borrow_mut().define(name, Value::Null);
 
-        let methods = class.methods.iter().map(|method| {
-            let mname = method.name.ident();
+        if let Some(sc) = &super_class {
+            // 如果拥有基类，
+            // 则在绑定`this`的环境之前
+            // 再加一个能通过`super`访问到基类的环境
+            self.env = RcCell::new(Env::from(&self.env));
+            self.env
+                .borrow_mut()
+                .insert("super", Value::Callable(sc.clone() as _));
+        }
 
-            (mname, LoxFunction::new(method, &self.env, mname == "init"))
-        });
+        let methods: Vec<_> = class
+            .methods
+            .iter()
+            .map(|method| {
+                let mname = method.name.ident();
+
+                // 若有基类，那么在此处就把含有`super`的环境绑给所有方法了
+                (mname, LoxFunction::new(method, &self.env, mname == "init"))
+            })
+            .collect();
+        if class.super_class.is_some() {
+            let origin_env = self.env.borrow_mut().enclose.take().unwrap();
+            self.env = origin_env;
+        }
         let class_methods = class.class_methods.iter().map(|method| {
             let mname = method.name.ident();
 
             (mname, LoxFunction::new(method, &self.env, false))
         });
-        let class = LoxClass::new(name.ident(), methods, class_methods);
+        let class = LoxClass::new(name.ident(), super_class, methods, class_methods);
 
         self.env.borrow_mut().define(name, class.into());
 
         Ok(())
+    }
+
+    fn super_expr(&mut self, expr: &Super, shell: &Expr) -> Result<Value, ExecError> {
+        let depth = *self.locals.get(shell).unwrap();
+
+        let super_class = Env::get_at(self.env.clone(), depth, "super")
+            .into_class()
+            .unwrap();
+
+        // 基类和子类共用一个实例。
+        // 由于lox比较简单，子类不知道基类有啥字段
+        let instance = Env::get_at(self.env.clone(), depth - 1, "this")
+            .into_instance()
+            .unwrap();
+
+        let method = super_class.get_method(&expr.method)?;
+        Ok(method.bind(&instance).into())
     }
 
     fn begin_scope(&mut self) {
@@ -653,6 +704,7 @@ impl LoxCallable for LoxLambda {
 #[derive(Debug, Clone)]
 pub struct LoxClass {
     name: SmolStr,
+    super_class: Option<Rc<Self>>,
     methods: HashMap<SmolStr, Rc<LoxFunction>>,
     class_methods: HashMap<SmolStr, Rc<LoxFunction>>,
 }
@@ -660,22 +712,42 @@ pub struct LoxClass {
 impl LoxClass {
     pub fn new<'a>(
         name: &str,
-        methods: impl Iterator<Item = (&'a str, LoxFunction)>,
-        class_methods: impl Iterator<Item = (&'a str, LoxFunction)>,
+        super_class: Option<Rc<LoxClass>>,
+        methods: impl IntoIterator<Item = (&'a str, LoxFunction)>,
+        class_methods: impl IntoIterator<Item = (&'a str, LoxFunction)>,
     ) -> Self {
         Self {
             name: name.into(),
-            methods: methods.map(|(s, f)| (s.into(), Rc::new(f))).collect(),
-            class_methods: class_methods.map(|(s, f)| (s.into(), Rc::new(f))).collect(),
+            super_class,
+            methods: methods
+                .into_iter()
+                .map(|(s, f)| (s.into(), Rc::new(f)))
+                .collect(),
+            class_methods: class_methods
+                .into_iter()
+                .map(|(s, f)| (s.into(), Rc::new(f)))
+                .collect(),
         }
     }
 
-    pub fn get(&self, prop: &Lexeme) -> Result<Value, ExecError> {
+    pub fn get_method(&self, prop: &Lexeme) -> Result<&LoxFunction, ExecError> {
+        let name = prop.ident();
+
+        self.methods
+            .get(name)
+            .map(Rc::as_ref)
+            .ok_or_else(|| ExecError {
+                span: prop.span.clone(),
+                msg: format!("undefined property `{name}`"),
+            })
+    }
+
+    pub fn get_class_method(&self, prop: &Lexeme) -> Result<Rc<LoxFunction>, ExecError> {
         let name = prop.ident();
 
         self.class_methods
             .get(name)
-            .map(|v| Value::Callable(v.clone()))
+            .cloned()
             .ok_or_else(|| ExecError {
                 span: prop.span.clone(),
                 msg: format!("undefined property `{name}`"),
@@ -722,11 +794,18 @@ impl LoxInstance {
     pub fn get(&self, field: &Lexeme) -> Result<Value, ExecError> {
         let name = field.ident();
 
+        // 先找自己的实例方法，再找基类的，达到override的目的
         self.fields
             .borrow()
             .get(name)
             .cloned()
             .or_else(|| self.class.methods.get(name).map(|v| v.bind(self).into()))
+            .or_else(|| {
+                self.class
+                    .super_class
+                    .as_ref()
+                    .and_then(|sc| sc.methods.get(name).map(|v| v.bind(self).into()))
+            })
             .ok_or_else(|| ExecError {
                 span: field.span.clone(),
                 msg: format!("undefined property `{name}`"),

@@ -146,3 +146,9 @@ impl Spanned for Return {
         }
     }
 }
+
+impl Spanned for Class {
+    fn span(&self) -> Span {
+        self.keyword.span.enclose(&self.name.span)
+    }
+}
