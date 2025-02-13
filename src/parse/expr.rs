@@ -155,8 +155,8 @@ impl From<Variable> for Expr {
 }
 
 impl From<Call> for Expr {
-    fn from(expr: Call) -> Self {
-        Self::Call(expr)
+    fn from(call: Call) -> Self {
+        Self::Call(call)
     }
 }
 
@@ -187,5 +187,11 @@ impl From<Set> for Expr {
 impl From<This> for Expr {
     fn from(this: This) -> Self {
         Self::This(this)
+    }
+}
+
+impl From<Super> for Expr {
+    fn from(expr: Super) -> Self {
+        Self::Super(expr)
     }
 }

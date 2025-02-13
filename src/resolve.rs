@@ -18,7 +18,7 @@ pub struct Resolver<'i> {
     /// 所有作用域叠成的栈，会动态变化；
     /// 映射：变量名到是否初始化
     scopes: Vec<HashMap<SmolStr, bool>>,
-    in_class: bool,
+    current_ct: Option<ClassType>,
     current_ft: Option<FunctionType>,
     interpreter: &'i mut Interpreter,
 }
@@ -27,7 +27,7 @@ impl<'i> Resolver<'i> {
     pub fn new(interpreter: &'i mut Interpreter) -> Self {
         Self {
             interpreter,
-            in_class: false,
+            current_ct: None,
             current_ft: None,
             scopes: vec![],
         }
@@ -55,9 +55,7 @@ impl<'i> Resolver<'i> {
             Expr::Get(get) => self.resolve_expr(&get.object),
             Expr::Set(set) => self.set(set),
             Expr::This(this) => self.this(this, expr),
-            Expr::Super(_) => {
-                unimplemented!()
-            }
+            Expr::Super(sp) => self.super_expr(sp, expr),
         }
     }
 
@@ -279,11 +277,26 @@ impl Resolver<'_> {
     }
 
     fn class(&mut self, class: &Class) -> Result<(), ResolveError> {
-        let enclose_in_class = mem::replace(&mut self.in_class, true);
+        let enclose_ct = self.current_ct.replace(ClassType::Class);
 
         let name = class.name.ident();
         self.declare(name);
         self.define(name);
+
+        if let Some(super_class) = &class.super_class {
+            if name != super_class.name.ident() {
+                self.current_ct = Some(ClassType::SubClass);
+                self.variable(super_class, &Expr::Variable(super_class.clone()))?;
+                // 此环境包裹着`this`的环境，使用`super`指向基类
+                self.begin_scope();
+                self.scopes.last_mut().unwrap().insert("super".into(), true);
+            } else {
+                return Err(ResolveError {
+                    span: class.span(),
+                    msg: "a class can't inherit from itself".into(),
+                });
+            }
+        }
 
         // 类层面的作用域对应于翻译时的实例绑定
         self.begin_scope();
@@ -302,13 +315,21 @@ impl Resolver<'_> {
             Ok(())
         }();
         self.end_scope();
+
+        if class.super_class.is_some() {
+            self.end_scope();
+        }
+
         res?;
 
         for method in &class.class_methods {
-            self.resolve_func(method, FunctionType::Method)?;
+            self.resolve_func(method, FunctionType::Method)
+                .inspect_err(|_| {
+                    self.current_ct = enclose_ct;
+                })?;
         }
 
-        self.in_class = enclose_in_class;
+        self.current_ct = enclose_ct;
 
         Ok(())
     }
@@ -352,12 +373,23 @@ impl Resolver<'_> {
     }
 
     fn this(&mut self, this: &This, shell: &Expr) -> Result<(), ResolveError> {
-        if self.in_class {
+        if self.current_ct.is_some() {
             self.resolve_local(shell, this.keyword.ident())
         } else {
             Err(ResolveError {
                 span: this.span(),
                 msg: "can't use `this` outside of a class".into(),
+            })
+        }
+    }
+
+    fn super_expr(&mut self, sp: &Super, shell: &Expr) -> Result<(), ResolveError> {
+        if let Some(ClassType::SubClass) = &self.current_ct {
+            self.resolve_local(shell, sp.keyword.ident())
+        } else {
+            Err(ResolveError {
+                span: sp.span(),
+                msg: "`super` is only allowed used in subclass".into(),
             })
         }
     }
@@ -374,4 +406,10 @@ enum FunctionType {
     Function,
     Init,
     Method,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ClassType {
+    Class,
+    SubClass,
 }

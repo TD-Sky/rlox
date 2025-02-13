@@ -295,7 +295,7 @@ impl Parser<'_> {
     }
 
     /// ```text
-    /// class -> "class" IDENTIFIER "{" function* "}"
+    /// class -> "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}"
     /// ```
     fn class(&mut self, class: Lexeme) -> Result<Class, ParseError> {
         let name = self
@@ -305,6 +305,18 @@ impl Parser<'_> {
                 span: self.cursor.next_span(),
                 msg: "expect class name".into(),
             })?;
+
+        let mut super_class = None;
+        if self.cursor.next_if_eq(Token::Less).is_some() {
+            let class_name = self
+                .cursor
+                .next_if(|t| matches!(t, Token::Identifier(_)))
+                .ok_or_else(|| ParseError {
+                    span: self.cursor.prev_span(),
+                    msg: "expect super class name".into(),
+                })?;
+            super_class = Some(Variable { name: class_name });
+        }
 
         self.cursor
             .next_if_eq(Token::LeftBrace)
@@ -337,6 +349,7 @@ impl Parser<'_> {
         Ok(Class {
             keyword: class,
             name,
+            super_class,
             methods,
             class_methods,
         })
@@ -619,6 +632,7 @@ impl Parser<'_> {
                     | Token::Identifier(_)
                     | Token::Fun
                     | Token::This
+                    | Token::Super
             )
         }) else {
             return Err(ParseError {
@@ -706,6 +720,28 @@ impl Parser<'_> {
             }
             Token::Identifier(_) => Variable { name: lex }.into(),
             Token::This => This { keyword: lex }.into(),
+            // `super`不能独自用，必须接方法
+            Token::Super => {
+                self.cursor
+                    .next_if_eq(Token::Dot)
+                    .ok_or_else(|| ParseError {
+                        span: self.cursor.prev_span(),
+                        msg: "expect `.` after `super`.".into(),
+                    })?;
+                let method = self
+                    .cursor
+                    .next_if(|t| matches!(t, Token::Identifier(_)))
+                    .ok_or_else(|| ParseError {
+                        span: self.cursor.prev_span(),
+                        msg: "expect super class method name".into(),
+                    })?;
+
+                Super {
+                    keyword: lex,
+                    method,
+                }
+                .into()
+            }
             _ => unreachable!(),
         };
 

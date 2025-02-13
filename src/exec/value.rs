@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use smol_str::SmolStr;
 
-use super::{call::LoxCallable, intp::LoxInstance};
+use super::{
+    call::LoxCallable,
+    intp::{LoxClass, LoxFunction, LoxInstance},
+};
 use crate::parse::types::Literal;
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,34 @@ impl Value {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_fun(&self) -> Option<&LoxFunction> {
+        match self {
+            Value::Callable(c) => c.as_ref().downcast_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn into_class(self) -> Option<Rc<LoxClass>> {
+        match self {
+            Value::Callable(c) => c.downcast_rc().ok(),
+            _ => None,
+        }
+    }
+
+    pub fn into_instance(self) -> Option<LoxInstance> {
+        match self {
+            Value::Instance(instance) => Some(instance),
+            _ => None,
+        }
+    }
+
+    pub fn into_fun(self) -> Option<Rc<LoxFunction>> {
+        match self {
+            Value::Callable(c) => c.downcast_rc().ok(),
             _ => None,
         }
     }

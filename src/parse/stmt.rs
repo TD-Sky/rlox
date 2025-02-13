@@ -1,5 +1,7 @@
 use crate::{parse::types::Expr, scan::Lexeme};
 
+use super::expr::Variable;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Stmt {
     Expr(Expr),
@@ -71,6 +73,7 @@ pub struct Return {
 pub struct Class {
     pub keyword: Lexeme,
     pub name: Lexeme,
+    pub super_class: Option<Variable>,
     pub methods: Vec<Function>,
     pub class_methods: Vec<Function>,
 }
